@@ -1,0 +1,33 @@
+{
+  "id": "gocardless",
+  "name": "GoCardless Import",
+  "description": "GoCardless Direct Debit payout import. Scans the customer's mailbox for payout notification emails, matches payments to customers, and posts as sales receipts to Opera.",
+  "version": "1.0.0",
+  "author": "IntSys",
+  "category": "finance",
+  "type": "full-stack",
+  "minSamVersion": "1.0.0",
+  "frontend": {
+    "entryComponent": "GoCardless",
+    "basePath": "/gocardless",
+    "navLabel": "GoCardless",
+    "navIcon": "CreditCard",
+    "requiredSharedDeps": ["react", "react-dom", "react-router-dom"]
+  },
+  "backend": {
+    "routePrefix": "/api/apps/gocardless",
+    "requiresDatabase": true,
+    "databaseType": "opera-se",
+    "separateDatabase": true,
+    "internalApiPrefix": "/api"
+  },
+  "permissions": [
+    "opera:read",
+    "opera:write",
+    "sam:config:read"
+  ],
+  "consumes": {
+    "email-ingest": true,
+    "llm": true
+  }
+}
