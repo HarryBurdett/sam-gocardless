@@ -80,35 +80,76 @@ out of the host CSS.
 
 ## Standalone mode
 
-To run the plugin without a SAM host:
+The repo ships with a self-hosted Express server (`standalone/`) that runs the plugin without SAM. It supports **multiple companies** — each a top-level subdirectory under `DATA_ROOT` with its own SQLite, its own GoCardless settings, and (optionally) its own Opera database mapping. The company is picked at login.
+
+### Quick start (no Opera, settings-only)
 
 ```sh
 npm install
 npm run build                              # builds dist/ + frontend/dist/
+mkdir -p data/main                          # one or more company dirs
 LOGIN_PASSWORD=<choose-a-strong-one> npm run start
 ```
 
-Then open `http://localhost:3000`, log in with the password you set, and use the GoCardless wizard. Data persists in `./data/gocardless.sqlite`.
+Open `http://localhost:3000`, pick a company from the dropdown, log in. With `OPERA_ADAPTER=noop` (default), the wizard can manage GoCardless settings, mandates, payment requests, etc. — but anything that needs to talk to Opera (customer matching, batch posting, eligible-customer lookup) will surface a clear error.
 
-Configurable env vars:
+### With an Opera connection (opera-se / MSSQL)
+
+```sh
+LOGIN_PASSWORD=<password> \
+OPERA_ADAPTER=mssql \
+OPERA_SQL_HOST=<sql-server-ip-or-hostname> \
+OPERA_SQL_USER=<user> \
+OPERA_SQL_PASSWORD=<password> \
+OPERA_SQL_TRUST_CERT=true \
+OPERA_SQL_ENCRYPT=false \
+npm run start
+```
+
+Each company needs an `opera.json` at `<DATA_ROOT>/<code>/opera.json`:
+
+```json
+{ "database": "Opera3SECompany00I", "operaVersion": "SE" }
+```
+
+The plugin's `getCompanyDb(code)` then returns a Knex pool against that database. Customer matching, payouts, and batch posting all work against the real Opera SE schema.
+
+### Migrating from the legacy Python `apps/gocardless/`
+
+Set `LEGACY_DATA_ROOT` to the legacy `data/` directory. On first boot of each company, the standalone host:
+
+1. Auto-discovers companies from `LEGACY_DATA_ROOT/<code>/gocardless/` and creates a stub `<DATA_ROOT>/<code>/` for each.
+2. Seeds the new `settings` table from `<LEGACY_DATA_ROOT>/<code>/gocardless/gocardless_settings.json`.
+3. Seeds `<DATA_ROOT>/<code>/opera.json` from `<LEGACY_DATA_ROOT>/../companies/<code>.json` (or `LEGACY_COMPANIES_DIR` if set).
+4. Migrates rows from `<LEGACY_DATA_ROOT>/<code>/gocardless/gocardless_payments.db` (mandates, partner signups, payment requests, subscriptions, mandate setup requests). Duplicate-key rows in the legacy data are skipped with a per-table summary.
+
+All of this is idempotent — re-runs are no-ops once the destination has data.
+
+### All env vars
 
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port |
-| `DATABASE_PATH` | `./data/gocardless.sqlite` | SQLite file location |
+| `DATA_ROOT` | `./data` | Parent dir for per-company SQLite files |
+| `LEGACY_DATA_ROOT` | _unset_ | Legacy `data/<company>/gocardless/` directory; enables auto-discovery + migration |
+| `LEGACY_COMPANIES_DIR` | `<LEGACY_DATA_ROOT>/../companies` | Source of legacy `<code>.json` files for seeding `opera.json` |
 | `LOGIN_PASSWORD` | _required_ | Shared password for the login form |
-| `SESSION_SECRET` | auto-generated to `./data/.session-secret` | Cookie signing key |
-| `OPERA_ADAPTER` | `noop` | Opera connection adapter (only `noop` is shipped) |
+| `SESSION_SECRET` | auto-generated to `<DATA_ROOT>/.session-secret` | Cookie signing key |
+| `OPERA_ADAPTER` | `noop` | `noop` or `mssql` |
+| `OPERA_SQL_HOST` | _required when `mssql`_ | Opera SQL server host |
+| `OPERA_SQL_PORT` | `1433` | Opera SQL server port |
+| `OPERA_SQL_USER` | _required when `mssql`_ | SQL Server username |
+| `OPERA_SQL_PASSWORD` | _required when `mssql`_ | SQL Server password |
+| `OPERA_SQL_TRUST_CERT` | `true` | Trust the server's TLS cert (Opera SE typically uses a self-signed cert) |
+| `OPERA_SQL_ENCRYPT` | `true` | TLS-encrypt the connection. Set `false` for IP-only Opera servers (tedious rejects IP as TLS ServerName) |
 | `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Passed verbatim to Express's `app.set('trust proxy', …)` |
-
-### Without an Opera connection
-
-The shipped `noop` Opera adapter makes every `ctx.db.getCompanyDb()` call return `null`. The settings page, mandate registry, payment requests, partner signup flows, and import history all work normally — they only touch the standalone SQLite. **Customer matching, eligible-customer lookups, batch posting to Opera, and any wizard step that needs Opera customer data will surface "No Opera company in context" or similar errors.** That's expected with `OPERA_ADAPTER=noop`; a real adapter is the next building block.
 
 ### Behind a reverse proxy
 
-If the standalone server sits behind a TLS-terminating reverse proxy on a public IP (Caddy, Nginx, Cloudflare with a public backend), the default `TRUST_PROXY` value (`loopback, linklocal, uniquelocal`) will not match the proxy's source address, so `req.protocol` stays `http` and session cookies will not carry the `Secure` flag. Set `TRUST_PROXY` to a value that Express recognises (e.g. `1` to trust the first hop, or a CIDR like `10.0.0.0/8`) when deploying behind a non-private proxy. See [the Express docs on `trust proxy`](https://expressjs.com/en/guide/behind-proxies.html).
+If the standalone server sits behind a TLS-terminating reverse proxy on a public IP (Caddy, Nginx, Cloudflare with a public backend), the default `TRUST_PROXY` value will not match the proxy's source address, so `req.protocol` stays `http` and session cookies will not carry the `Secure` flag. Set `TRUST_PROXY` to a value that Express recognises (e.g. `1` to trust the first hop, or a CIDR like `10.0.0.0/8`). See [the Express docs on `trust proxy`](https://expressjs.com/en/guide/behind-proxies.html).
 
-The standalone host is a sibling of, not a replacement for, the SAM plugin contract. `src/`, `frontend/`, `db/migrations/`, and `manifest.json` are unchanged — SAM continues to consume this repo as a plugin without any adapter shim.
+### Relationship to SAM
+
+`src/`, `frontend/`, `db/migrations/`, and `manifest.json` are unchanged from upstream — SAM continues to consume this repo as a plugin without any adapter shim. The `standalone/` directory is sibling-only and never imported by `dist/index.js`. When merged into SAM, the standalone host becomes inert (SAM provides its own per-tenant `AppContext`); the Opera adapter you configure here continues to work because the adapter interface is the same shape SAM expects.
 
 ⚠️ The standalone host has no TLS, no rate limiting, and no IP allowlist. Put a reverse proxy in front of it for anything beyond a private network.
