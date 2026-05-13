@@ -26,6 +26,20 @@ export interface OperaAdapter {
    * Always present; the noop adapter is a no-op.
    */
   destroy?: () => Promise<void>;
+  /**
+   * Invalidate cached state for a single company. Called by the
+   * standalone host after the operator edits the per-company
+   * opera.json so the next getCompanyDb(code) call rebuilds the
+   * pool against the new database / Opera version.
+   *
+   * `mapping` is the latest opera.json contents; null clears the
+   * mapping entirely (the company becomes inaccessible until
+   * mapped again).
+   */
+  invalidateCompany?: (
+    code: string,
+    mapping: { database: string; operaVersion?: string } | null,
+  ) => Promise<void>;
 }
 
 export const noOpAdapter: OperaAdapter = {
@@ -42,8 +56,8 @@ export interface SelectAdapterOptions {
     password: string;
     trustServerCertificate: boolean;
     encrypt: boolean;
-    /** companyCode → Opera-database name */
-    companies: ReadonlyMap<string, string>;
+    /** companyCode → { database, operaVersion } */
+    companies: ReadonlyMap<string, { database: string; operaVersion?: string }>;
   };
   logger: AppLogger;
 }

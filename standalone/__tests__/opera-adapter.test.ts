@@ -67,12 +67,61 @@ describe('opera-adapter', () => {
           password: 'p',
           trustServerCertificate: true,
           encrypt: true,
-          companies: new Map([['intsys', 'Opera3SECompany00I']]),
+          companies: new Map([
+            ['intsys', { database: 'Opera3SECompany00I', operaVersion: 'SE' }],
+          ]),
         },
       });
       expect(adapter.operaType).toBe('opera-se');
       expect(typeof adapter.getCompanyDb).toBe('function');
       expect(adapter.getCompanyDb('unknown')).toBeNull();
+      if (adapter.destroy) await adapter.destroy();
+    });
+
+    it('mssql adapter skips companies whose operaVersion is "3"', async () => {
+      const adapter = await selectAdapter({
+        name: 'mssql',
+        logger: silentLogger,
+        mssql: {
+          host: 'localhost',
+          port: 1433,
+          user: 'u',
+          password: 'p',
+          trustServerCertificate: true,
+          encrypt: true,
+          companies: new Map([
+            ['legacy3', { database: 'whatever', operaVersion: '3' }],
+          ]),
+        },
+      });
+      expect(adapter.getCompanyDb('legacy3')).toBeNull();
+      if (adapter.destroy) await adapter.destroy();
+    });
+
+    it('invalidateCompany drops the cached pool + updates the mapping', async () => {
+      const adapter = await selectAdapter({
+        name: 'mssql',
+        logger: silentLogger,
+        mssql: {
+          host: 'localhost',
+          port: 1433,
+          user: 'u',
+          password: 'p',
+          trustServerCertificate: true,
+          encrypt: true,
+          companies: new Map([
+            ['intsys', { database: 'Opera3SECompany00I', operaVersion: 'SE' }],
+          ]),
+        },
+      });
+      // Switch this company to opera-3 — subsequent getCompanyDb should now return null.
+      if (adapter.invalidateCompany) {
+        await adapter.invalidateCompany('intsys', {
+          database: 'Opera3SECompany00I',
+          operaVersion: '3',
+        });
+      }
+      expect(adapter.getCompanyDb('intsys')).toBeNull();
       if (adapter.destroy) await adapter.destroy();
     });
   });

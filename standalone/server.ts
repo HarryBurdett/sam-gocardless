@@ -16,7 +16,7 @@
  * AppContext and never imports this module.
  */
 import express, { type Express, type Router, type Request, type Response, type NextFunction } from 'express';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { loadConfig, type StandaloneConfig } from './config.js';
@@ -76,9 +76,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
-  // Build the standalone-company → Opera-database map by reading each
-  // company's opera.json (seeding from legacy on first run if available).
-  const operaCompanies = new Map<string, string>();
+  // Build the standalone-company → { database, operaVersion } map by
+  // reading each company's opera.json (seeding from legacy on first
+  // run if available).
+  const operaCompanies = new Map<
+    string,
+    { database: string; operaVersion?: string }
+  >();
   for (const code of codes) {
     const cfg = loadOperaConfig(
       config.dataRoot,
@@ -86,7 +90,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       code,
       consoleLogger,
     );
-    if (cfg) operaCompanies.set(code, cfg.database);
+    if (cfg) {
+      operaCompanies.set(code, {
+        database: cfg.database,
+        operaVersion: cfg.operaVersion,
+      });
+    }
   }
 
   const operaAdapter = await selectAdapter({
@@ -207,6 +216,52 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       // (lazy — pool is created on first getCompanyDb call)
       company_loaded: Boolean(company),
     });
+  });
+
+  // Update the per-company opera.json (database + operaVersion).
+  // The Opera SQL connection details (host/user/password/etc.) are
+  // bootstrap-time env vars and are not editable here — they're
+  // host-wide and changing them requires restarting the process.
+  app.put('/auth/system-info', async (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session' });
+      return;
+    }
+    const body = (req.body ?? {}) as {
+      opera_database?: unknown;
+      opera_version?: unknown;
+    };
+    const database =
+      typeof body.opera_database === 'string' ? body.opera_database.trim() : '';
+    const operaVersion =
+      typeof body.opera_version === 'string' ? body.opera_version.trim() : '';
+    if (database.length === 0) {
+      res.status(400).json({ error: 'opera_database is required' });
+      return;
+    }
+    if (operaVersion.length > 0 && !['SE', '3'].includes(operaVersion)) {
+      res.status(400).json({ error: 'opera_version must be "SE" or "3"' });
+      return;
+    }
+
+    const dir = join(config.dataRoot, code);
+    mkdirSync(dir, { recursive: true });
+    const operaFile = join(dir, 'opera.json');
+    const payload: { database: string; operaVersion?: string } = { database };
+    if (operaVersion.length > 0) payload.operaVersion = operaVersion;
+    writeFileSync(operaFile, JSON.stringify(payload, null, 2) + '\n');
+
+    // Tell the adapter to drop any cached pool for this company so
+    // the next getCompanyDb() call rebuilds it against the new
+    // database / version.
+    if (operaAdapter.invalidateCompany) {
+      await operaAdapter.invalidateCompany(code, payload);
+    }
+    consoleLogger.info(
+      `[${code}] opera.json updated: database=${payload.database} operaVersion=${payload.operaVersion ?? '(default SE)'}`,
+    );
+    res.json({ ok: true, opera_database: payload.database, opera_version: payload.operaVersion ?? null });
   });
 
   // Frontend static bundle.

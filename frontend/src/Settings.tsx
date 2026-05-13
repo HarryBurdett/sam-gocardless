@@ -28,45 +28,171 @@ function HelpPanel(_props: {
  * the operator can see what backend this host is wired up to
  * without reading env vars off-system. Secrets are never shown.
  */
-function SystemConnectionPanel(_props: { appLabel: string }) {
-  const [info, setInfo] = useState<null | {
-    active_company: { code: string | null; opera_database: string | null; opera_version: string | null };
-    adapter: string;
-    opera_sql: null | {
-      host: string;
-      port: number;
-      username: string;
-      password_configured: boolean;
-      encrypt: boolean;
-      trust_server_certificate: boolean;
-    };
-    data_root: string;
-    legacy_data_root: string | null;
-    company_loaded: boolean;
-  }>(null);
-  const [error, setError] = useState<string | null>(null);
+interface SystemInfo {
+  active_company: {
+    code: string | null;
+    opera_database: string | null;
+    opera_version: string | null;
+  };
+  adapter: string;
+  opera_sql: null | {
+    host: string;
+    port: number;
+    username: string;
+    password_configured: boolean;
+    encrypt: boolean;
+    trust_server_certificate: boolean;
+  };
+  data_root: string;
+  legacy_data_root: string | null;
+  company_loaded: boolean;
+}
 
-  useEffect(() => {
+function SystemConnectionPanel(_props: { appLabel: string }) {
+  const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editDb, setEditDb] = useState('');
+  const [editVersion, setEditVersion] = useState<'SE' | '3'>('SE');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
     fetch('/auth/system-info')
       .then(async (r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
-      .then(setInfo)
+      .then((data: SystemInfo) => {
+        setInfo(data);
+        setEditDb(data.active_company.opera_database ?? '');
+        setEditVersion(
+          data.active_company.opera_version === '3' ? '3' : 'SE',
+        );
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function save() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await fetch('/auth/system-info', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opera_database: editDb.trim(),
+          opera_version: editVersion,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setEditing(false);
+      refresh();
+    } catch (e) {
+      setSaveError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
-        <Wifi className="h-4 w-4 text-gray-500" />
-        <h3 className="text-sm font-semibold text-gray-700">System connection</h3>
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Wifi className="h-4 w-4 text-gray-500" />
+          <h3 className="text-sm font-semibold text-gray-700">System connection</h3>
+        </div>
+        {info && info.active_company.code && !editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-xs px-2 py-1 bg-white hover:bg-gray-100 border border-gray-300 text-gray-700 rounded"
+          >
+            Edit Opera mapping
+          </button>
+        )}
       </div>
       <div className="p-4 text-sm">
         {error ? (
           <p className="text-red-600">Could not load connection info: {error}</p>
         ) : !info ? (
           <p className="text-gray-500">Loading…</p>
+        ) : editing ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Opera database</label>
+              <input
+                type="text"
+                value={editDb}
+                onChange={(e) => setEditDb(e.target.value)}
+                placeholder="Opera3SECompany00I"
+                className="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Opera version</label>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="opera-version"
+                    value="SE"
+                    checked={editVersion === 'SE'}
+                    onChange={() => setEditVersion('SE')}
+                  />
+                  <span>SE (MSSQL — Opera SQL Server)</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="opera-version"
+                    value="3"
+                    checked={editVersion === '3'}
+                    onChange={() => setEditVersion('3')}
+                  />
+                  <span>3 (VFP — requires opera-3 agent)</span>
+                </label>
+              </div>
+              {editVersion === '3' && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+                  Opera 3 uses VFP / FoxPro files via a separate read/write agent. The bundled MSSQL adapter will return null for this company until an opera-3 adapter is wired in (SAM-provided or external service). Settings, mandates, payment requests, and other db.app-only flows still work.
+                </p>
+              )}
+            </div>
+            {saveError && (
+              <p className="text-xs text-red-600">Save failed: {saveError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving || editDb.trim().length === 0}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded text-sm font-medium"
+              >
+                {saving ? 'Saving…' : 'Save & reload'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false);
+                  setSaveError(null);
+                  // reset inputs to last-fetched values
+                  setEditDb(info.active_company.opera_database ?? '');
+                  setEditVersion(info.active_company.opera_version === '3' ? '3' : 'SE');
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 rounded text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : (
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
             <div>
