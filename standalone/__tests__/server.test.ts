@@ -10,6 +10,7 @@ let tmpDir: string;
 let server: Server;
 let url: string;
 let companies: Awaited<ReturnType<typeof buildApp>>['companies'];
+let operaAdapter: Awaited<ReturnType<typeof buildApp>>['operaAdapter'];
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), 'sgc-server-'));
@@ -22,6 +23,7 @@ beforeAll(async () => {
   delete process.env.LEGACY_DATA_ROOT;
   const built = await buildApp({ dataDir: tmpDir });
   companies = built.companies;
+  operaAdapter = built.operaAdapter;
   await new Promise<void>((resolve) => {
     server = built.app.listen(0, () => {
       const addr = server.address();
@@ -38,6 +40,7 @@ afterAll(async () => {
     await c.samDb.destroy();
     await c.appDb.destroy();
   }
+  if (operaAdapter.destroy) await operaAdapter.destroy();
   process.env = originalEnv;
   rmSync(tmpDir, { recursive: true, force: true });
 });

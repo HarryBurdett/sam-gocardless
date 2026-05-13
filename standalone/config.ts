@@ -30,9 +30,17 @@ export interface StandaloneConfig {
    * legacy JSON file. Null disables legacy migration entirely.
    */
   legacyDataRoot: string | null;
+  /**
+   * Optional path to a directory of legacy per-company JSON files
+   * (`<root>/<code>.json` with `{ database, opera_version }`). Used to
+   * seed `<dataRoot>/<code>/opera.json` on first run. If null and
+   * legacyDataRoot is set, defaults to `<legacyDataRoot>/../companies`.
+   */
+  legacyCompaniesDir: string | null;
   loginPassword: string;
   sessionSecret: string;
   operaAdapter: string;
+  mssql: MssqlEnv | null;
   /** Internal dir for .session-secret etc. (separate from per-company data). */
   dataDir: string;
   /**
@@ -44,6 +52,15 @@ export interface StandaloneConfig {
    * never applied.
    */
   trustProxy: string;
+}
+
+export interface MssqlEnv {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  trustServerCertificate: boolean;
+  encrypt: boolean;
 }
 
 export interface LoadConfigOptions {
@@ -77,8 +94,16 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
       ? resolve(process.env.LEGACY_DATA_ROOT)
       : null;
 
+  const legacyCompaniesDir =
+    process.env.LEGACY_COMPANIES_DIR && process.env.LEGACY_COMPANIES_DIR.length > 0
+      ? resolve(process.env.LEGACY_COMPANIES_DIR)
+      : legacyDataRoot
+        ? resolve(legacyDataRoot, '..', 'companies')
+        : null;
+
   const sessionSecret = resolveSessionSecret(dataDir);
   const operaAdapter = process.env.OPERA_ADAPTER ?? 'noop';
+  const mssql = operaAdapter === 'mssql' ? loadMssqlEnv() : null;
   const trustProxy =
     process.env.TRUST_PROXY && process.env.TRUST_PROXY.length > 0
       ? process.env.TRUST_PROXY
@@ -88,12 +113,42 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
     port,
     dataRoot,
     legacyDataRoot,
+    legacyCompaniesDir,
     loginPassword,
     sessionSecret,
     operaAdapter,
+    mssql,
     dataDir,
     trustProxy,
   };
+}
+
+function loadMssqlEnv(): MssqlEnv {
+  const host = process.env.OPERA_SQL_HOST;
+  const user = process.env.OPERA_SQL_USER;
+  const password = process.env.OPERA_SQL_PASSWORD;
+  if (!host || !user || !password) {
+    throw new Error(
+      'OPERA_ADAPTER=mssql requires OPERA_SQL_HOST, OPERA_SQL_USER, OPERA_SQL_PASSWORD.',
+    );
+  }
+  const port = process.env.OPERA_SQL_PORT
+    ? Number.parseInt(process.env.OPERA_SQL_PORT, 10)
+    : 1433;
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    throw new Error(`Invalid OPERA_SQL_PORT: ${process.env.OPERA_SQL_PORT}`);
+  }
+  const trustServerCertificate = parseBool(process.env.OPERA_SQL_TRUST_CERT, true);
+  const encrypt = parseBool(process.env.OPERA_SQL_ENCRYPT, true);
+  return { host, port, user, password, trustServerCertificate, encrypt };
+}
+
+function parseBool(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const v = value.toLowerCase().trim();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
+  return fallback;
 }
 
 function resolveSessionSecret(dataDir: string): string {

@@ -13,16 +13,29 @@
  * `company-registry.ts` is standalone-only code.
  */
 import knex, { type Knex } from 'knex';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Router } from 'express';
 import { runMigrations } from './migrate.js';
-import { selectAdapter, type OperaAdapter } from './opera-adapter.js';
+import type { OperaAdapter } from './opera-adapter.js';
 import type {
   AppContext,
   AppBackendFactory,
   AppLogger,
 } from '../src/app-context.js';
+
+export interface OperaCompanyConfig {
+  /** Opera database name, e.g. "Opera3SECompany00I". */
+  database: string;
+  /** "SE" or "3" — from legacy companies/<code>.json. */
+  operaVersion?: string;
+}
 
 export interface CompanyInstance {
   code: string;
@@ -65,6 +78,77 @@ export function discoverCompanies(
     .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
     .map((d) => d.name)
     .sort();
+}
+
+/**
+ * Load `<dataRoot>/<code>/opera.json` if it exists, optionally seeding
+ * it from `<legacyCompaniesDir>/<code>.json` on first run. Returns null
+ * when no Opera config is available for the company — the MSSQL adapter
+ * skips that company; the noop adapter is unaffected.
+ */
+export function loadOperaConfig(
+  dataRoot: string,
+  legacyCompaniesDir: string | null,
+  code: string,
+  logger: AppLogger,
+): OperaCompanyConfig | null {
+  const newFile = join(dataRoot, code, 'opera.json');
+  if (!existsSync(newFile)) {
+    if (legacyCompaniesDir) {
+      const seeded = trySeedFromLegacyCompanyJson(
+        legacyCompaniesDir,
+        code,
+        newFile,
+        logger,
+      );
+      if (!seeded) return null;
+    } else {
+      return null;
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(newFile, 'utf8')) as Partial<OperaCompanyConfig>;
+    if (typeof parsed.database !== 'string' || parsed.database.length === 0) {
+      logger.warn(`[${code}] opera.json missing "database" field`);
+      return null;
+    }
+    return {
+      database: parsed.database,
+      operaVersion: parsed.operaVersion,
+    };
+  } catch (err) {
+    logger.warn(`[${code}] opera.json unreadable: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+function trySeedFromLegacyCompanyJson(
+  legacyCompaniesDir: string,
+  code: string,
+  newFile: string,
+  logger: AppLogger,
+): boolean {
+  const legacyFile = join(legacyCompaniesDir, `${code}.json`);
+  if (!existsSync(legacyFile)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(legacyFile, 'utf8')) as {
+      database?: string;
+      opera_version?: string;
+    };
+    if (!parsed.database) return false;
+    const out: OperaCompanyConfig = { database: parsed.database };
+    if (parsed.opera_version) out.operaVersion = parsed.opera_version;
+    mkdirSync(join(newFile, '..'), { recursive: true });
+    writeFileSync(newFile, JSON.stringify(out, null, 2) + '\n');
+    logger.info(`[${code}] seeded opera.json from legacy company file (db=${out.database})`);
+    return true;
+  } catch (err) {
+    logger.warn(
+      `[${code}] could not seed opera.json from ${legacyFile}: ${(err as Error).message}`,
+    );
+    return false;
+  }
 }
 
 /**

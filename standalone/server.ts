@@ -21,10 +21,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { loadConfig, type StandaloneConfig } from './config.js';
 import { loginRouter, requireAuth } from './auth.js';
-import { selectAdapter } from './opera-adapter.js';
+import { selectAdapter, type OperaAdapter } from './opera-adapter.js';
 import {
   discoverCompanies,
   loadCompany,
+  loadOperaConfig,
   type CompanyInstance,
 } from './company-registry.js';
 import type {
@@ -53,6 +54,7 @@ export interface BuiltApp {
   app: Express;
   config: StandaloneConfig;
   companies: Map<string, CompanyInstance>;
+  operaAdapter: OperaAdapter;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
@@ -63,7 +65,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   }
 
   const config = loadConfig({ dataDir: opts.dataDir });
-  const adapter = selectAdapter(config.operaAdapter);
   const pluginMod = (await import(DIST_ENTRY)) as { default: AppBackendFactory };
 
   const codes = discoverCompanies(config.dataRoot, config.legacyDataRoot);
@@ -75,6 +76,27 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     );
   }
 
+  // Build the standalone-company → Opera-database map by reading each
+  // company's opera.json (seeding from legacy on first run if available).
+  const operaCompanies = new Map<string, string>();
+  for (const code of codes) {
+    const cfg = loadOperaConfig(
+      config.dataRoot,
+      config.legacyCompaniesDir,
+      code,
+      consoleLogger,
+    );
+    if (cfg) operaCompanies.set(code, cfg.database);
+  }
+
+  const operaAdapter = await selectAdapter({
+    name: config.operaAdapter,
+    logger: consoleLogger,
+    mssql: config.mssql
+      ? { ...config.mssql, companies: operaCompanies }
+      : undefined,
+  });
+
   const companies = new Map<string, CompanyInstance>();
   try {
     for (const code of codes) {
@@ -82,7 +104,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       const instance = await loadCompany(code, {
         dataRoot: config.dataRoot,
         legacyDataRoot: config.legacyDataRoot,
-        operaAdapter: adapter,
+        operaAdapter,
         logger: consoleLogger,
         factory: pluginMod.default,
       });
@@ -93,6 +115,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
       await c.samDb.destroy().catch(() => {});
       await c.appDb.destroy().catch(() => {});
     }
+    if (operaAdapter.destroy) await operaAdapter.destroy().catch(() => {});
     throw err;
   }
 
@@ -150,7 +173,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     },
   );
 
-  return { app, config, companies };
+  return { app, config, companies, operaAdapter };
 }
 
 function makeDispatcher(companies: Map<string, CompanyInstance>): Router {
@@ -179,8 +202,14 @@ async function main(): Promise<void> {
     if (config.legacyDataRoot) {
       console.log(`[standalone] legacy root: ${config.legacyDataRoot}`);
     }
+    if (config.legacyCompaniesDir) {
+      console.log(`[standalone] legacy companies: ${config.legacyCompaniesDir}`);
+    }
     console.log(`[standalone] companies:  ${Array.from(companies.keys()).join(', ')}`);
     console.log(`[standalone] adapter:    ${config.operaAdapter}`);
+    if (config.mssql) {
+      console.log(`[standalone] mssql:      ${config.mssql.user}@${config.mssql.host}:${config.mssql.port}`);
+    }
   });
 }
 
