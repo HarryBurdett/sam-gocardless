@@ -3,21 +3,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import type { Knex } from 'knex';
 import { buildApp } from '../server.js';
 
 const originalEnv = { ...process.env };
 let tmpDir: string;
 let server: Server;
 let url: string;
+let appDb: Knex;
+let samDb: Knex;
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), 'sgc-server-'));
   process.env.LOGIN_PASSWORD = 'shibboleth';
   process.env.DATABASE_PATH = join(tmpDir, 'gocardless.sqlite');
   process.env.SESSION_SECRET = 'test-secret-please-change-32chars';
-  const { app } = await buildApp({ dataDir: tmpDir });
+  const built = await buildApp({ dataDir: tmpDir });
+  appDb = built.appDb;
+  samDb = built.samDb;
   await new Promise<void>((resolve) => {
-    server = app.listen(0, () => {
+    server = built.app.listen(0, () => {
       const addr = server.address();
       if (!addr || typeof addr === 'string') throw new Error('no addr');
       url = `http://127.0.0.1:${addr.port}`;
@@ -28,6 +33,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await samDb.destroy();
+  await appDb.destroy();
   process.env = originalEnv;
   rmSync(tmpDir, { recursive: true, force: true });
 });

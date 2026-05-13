@@ -39,7 +39,7 @@ export interface BuildAppOptions {
 
 export async function buildApp(
   opts: BuildAppOptions = {},
-): Promise<{ app: Express; config: StandaloneConfig; appDb: Knex }> {
+): Promise<{ app: Express; config: StandaloneConfig; appDb: Knex; samDb: Knex }> {
   if (!existsSync(DIST_ENTRY)) {
     throw new Error(
       `${DIST_ENTRY} not found — run \`npm run build\` first.`,
@@ -49,85 +49,93 @@ export async function buildApp(
   const config = loadConfig({ dataDir: opts.dataDir });
   const adapter = selectAdapter(config.operaAdapter);
 
-  const appDb = knex({
-    client: 'sqlite3',
-    connection: { filename: config.databasePath },
-    useNullAsDefault: true,
-    pool: { min: 1, max: 1 },
-  });
-  await runMigrations(appDb);
+  let appDb: Knex | undefined;
+  let samDb: Knex | undefined;
+  try {
+    appDb = knex({
+      client: 'sqlite3',
+      connection: { filename: config.databasePath },
+      useNullAsDefault: true,
+      pool: { min: 1, max: 1 },
+    });
+    await runMigrations(appDb);
 
-  // db.sam is required by AppContext but unused by this plugin. A small
-  // in-memory pool keeps the type honest without writing anywhere.
-  const samDb = knex({
-    client: 'sqlite3',
-    connection: { filename: ':memory:' },
-    useNullAsDefault: true,
-    pool: { min: 1, max: 1 },
-  });
+    // db.sam is required by AppContext but unused by this plugin. A small
+    // in-memory pool keeps the type honest without writing anywhere.
+    samDb = knex({
+      client: 'sqlite3',
+      connection: { filename: ':memory:' },
+      useNullAsDefault: true,
+      pool: { min: 1, max: 1 },
+    });
 
-  const ctx: AppContext = {
-    appId: 'gocardless',
-    tenantId: 'standalone',
-    config: { mailboxes: [] },
-    operaType: adapter.operaType,
-    db: {
-      sam: samDb,
-      app: appDb,
-      operaSystem: null,
-      getCompanyDb: (code) => adapter.getCompanyDb(code),
-    },
-    logger: consoleLogger,
-  };
+    const ctx: AppContext = {
+      appId: 'gocardless',
+      tenantId: 'standalone',
+      config: { mailboxes: [] },
+      operaType: adapter.operaType,
+      db: {
+        sam: samDb,
+        app: appDb,
+        operaSystem: null,
+        getCompanyDb: (code) => adapter.getCompanyDb(code),
+      },
+      logger: consoleLogger,
+    };
 
-  const pluginMod = (await import(DIST_ENTRY)) as { default: AppBackendFactory };
-  const pluginRouter = await pluginMod.default(ctx);
+    const pluginMod = (await import(DIST_ENTRY)) as { default: AppBackendFactory };
+    const pluginRouter = await pluginMod.default(ctx);
 
-  const app = express();
-  // Trust loopback + private-network proxies so req.protocol honors
-  // X-Forwarded-Proto when running behind a TLS-terminating reverse
-  // proxy. Required for the auth middleware to set Secure on cookies.
-  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
+    const app = express();
+    // Trust loopback + private-network proxies so req.protocol honors
+    // X-Forwarded-Proto when running behind a TLS-terminating reverse
+    // proxy. Required for the auth middleware to set Secure on cookies.
+    app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
-  app.use(express.json({ limit: '10mb' }));
+    app.use(express.json({ limit: '10mb' }));
 
-  // /login.html — explicit, before auth, so unauthenticated users can reach it.
-  app.get('/login.html', (_req, res) => {
-    res.sendFile(resolve(PUBLIC_DIR, 'login.html'));
-  });
+    // /login.html — explicit, before auth, so unauthenticated users can reach it.
+    app.get('/login.html', (_req, res) => {
+      res.sendFile(resolve(PUBLIC_DIR, 'login.html'));
+    });
 
-  // /auth/* — login + logout, no auth required.
-  app.use('/auth', loginRouter(config));
+    // /auth/* — login + logout, no auth required.
+    app.use('/auth', loginRouter(config));
 
-  // Everything below requires auth.
-  app.use(requireAuth(config));
+    // Everything below requires auth.
+    app.use(requireAuth(config));
 
-  // Frontend static bundle.
-  app.use(
-    '/api/apps/gocardless/static',
-    express.static(FRONTEND_DIST),
-  );
+    // Frontend static bundle.
+    app.use(
+      '/api/apps/gocardless/static',
+      express.static(FRONTEND_DIST),
+    );
 
-  // Plugin API.
-  app.use('/api/apps/gocardless', pluginRouter);
+    // Plugin API.
+    app.use('/api/apps/gocardless', pluginRouter);
 
-  // App shell + any other authenticated static assets.
-  app.use(express.static(PUBLIC_DIR));
+    // App shell + any other authenticated static assets.
+    app.use(express.static(PUBLIC_DIR));
 
-  // Catch-all error handler.
-  app.use(
-    (
-      err: Error,
-      _req: express.Request,
-      res: express.Response,
-      _next: express.NextFunction,
-    ) => {
-      consoleLogger.error('unhandled:', err);
-      res.status(500).json({ error: err.message });
-    },
-  );
+    // Catch-all error handler.
+    app.use(
+      (
+        err: Error,
+        _req: express.Request,
+        res: express.Response,
+        _next: express.NextFunction,
+      ) => {
+        consoleLogger.error('unhandled:', err);
+        res.status(500).json({ error: err.message });
+      },
+    );
 
-  return { app, config, appDb };
+    return { app, config, appDb, samDb };
+  } catch (err) {
+    if (samDb) await samDb.destroy().catch(() => {});
+    if (appDb) await appDb.destroy().catch(() => {});
+    throw err;
+  }
 }
 
 async function main(): Promise<void> {
