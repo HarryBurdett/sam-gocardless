@@ -13,6 +13,7 @@
  * `company-registry.ts` is standalone-only code.
  */
 import knex, { type Knex } from 'knex';
+import { buildOperaAwareImportLock } from './import-lock-mssql.js';
 import {
   existsSync,
   mkdirSync,
@@ -202,6 +203,16 @@ export async function loadCompany(
       },
       logger: opts.logger,
     };
+
+    // Inject the SQL Server applock-backed import lock. Picks MSSQL
+    // when an Opera Knex pool is available for this company (opera-se);
+    // falls back to in-memory when not (opera-3 / noop). The adapter
+    // hook the plugin reads is `ctx.gocardlessImportLock`.
+    (ctx as Record<string, unknown>).gocardlessImportLock =
+      buildOperaAwareImportLock(
+        () => opts.operaAdapter.getCompanyDb(code),
+        opts.logger,
+      );
 
     const router = await opts.factory(ctx);
     return { code, ctx, router, appDb, samDb };

@@ -81,7 +81,11 @@ export function buildMssqlAdapter(config: MssqlAdapterConfig): MssqlAdapter {
             trustServerCertificate: config.trustServerCertificate,
           },
         },
-        pool: { min: 0, max: 5 },
+        // max=10 leaves headroom for lock-only transactions (one per
+        // active bank-level import) plus active query traffic. The
+        // standalone host's applock holds one connection per held
+        // lock for its lifetime; over-provisioning here is cheap.
+        pool: { min: 0, max: 10 },
       });
       pools.set(code, pool);
       config.logger.info(
