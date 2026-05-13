@@ -28,13 +28,31 @@
     <script src="/api/apps/gocardless/static/index.js"></script>
 
     <script>
-      (function () {
+      (async function () {
+        const appEl = document.getElementById('app');
         const entry = window.__SAM_APPS__ && window.__SAM_APPS__['gocardless'];
         if (!entry) {
-          document.getElementById('app').innerText =
-            'Failed to load plugin bundle.';
+          appEl.innerText = 'Failed to load plugin bundle.';
           return;
         }
+
+        // Fetch the selected company from /auth/me so the SAM context's
+        // currentCompany is populated (the plugin's api-shim relays this
+        // as an X-Opera-Company header on every request).
+        let companyCode = null;
+        try {
+          const meRes = await fetch('/auth/me');
+          if (meRes.status === 401) {
+            location.href = '/login.html';
+            return;
+          }
+          const me = await meRes.json();
+          companyCode = me.company || null;
+        } catch (err) {
+          appEl.innerText = 'Could not read session: ' + (err.message || err);
+          return;
+        }
+
         const BASE = '/api/apps/gocardless';
         async function samFetch(path, options) {
           const url = path.startsWith('/') ? BASE + path : BASE + '/' + path;
@@ -63,15 +81,16 @@
           }
           return parsed;
         }
+
         const context = {
           appId: 'gocardless',
           user: { userId: 'local', email: 'local@standalone', role: 'admin' },
           token: null,
-          currentCompany: null,
+          currentCompany: companyCode ? { code: companyCode, name: companyCode } : null,
           api: { baseUrl: BASE, fetch: samFetch },
           events: new EventTarget(),
         };
-        const root = ReactDOM.createRoot(document.getElementById('app'));
+        const root = ReactDOM.createRoot(appEl);
         root.render(React.createElement(entry.component, { context: context }));
       })();
     </script>

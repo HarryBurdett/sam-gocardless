@@ -22,17 +22,19 @@
       }
       h1 { font-size: 18px; margin: 0 0 16px; }
       label { display: block; font-size: 13px; margin-bottom: 6px; }
-      input[type=password] {
+      input[type=password], select {
         width: 100%;
         padding: 8px 10px;
         border: 1px solid #d1d5db;
         border-radius: 4px;
         font-size: 14px;
         box-sizing: border-box;
+        background: white;
       }
+      .field { margin-bottom: 12px; }
       button {
         width: 100%;
-        margin-top: 16px;
+        margin-top: 8px;
         padding: 8px;
         background: #2563eb;
         color: white;
@@ -43,20 +45,64 @@
       }
       button:disabled { background: #9ca3af; cursor: not-allowed; }
       .error { color: #b91c1c; font-size: 13px; margin-top: 12px; min-height: 1em; }
+      .info  { color: #6b7280; font-size: 12px; margin-top: 4px; }
     </style>
   </head>
   <body>
     <form id="f">
       <h1>GoCardless Import — login</h1>
-      <label for="p">Password</label>
-      <input id="p" name="password" type="password" autocomplete="current-password" required autofocus />
-      <button id="b" type="submit">Sign in</button>
+      <div class="field">
+        <label for="company">Company</label>
+        <select id="company" name="company" required>
+          <option value="">Loading…</option>
+        </select>
+        <div class="info" id="companyInfo"></div>
+      </div>
+      <div class="field">
+        <label for="p">Password</label>
+        <input id="p" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button id="b" type="submit" disabled>Sign in</button>
       <div class="error" id="e"></div>
     </form>
     <script>
       const f = document.getElementById('f');
       const b = document.getElementById('b');
       const e = document.getElementById('e');
+      const select = document.getElementById('company');
+      const info = document.getElementById('companyInfo');
+
+      async function loadCompanies() {
+        try {
+          const res = await fetch('/auth/companies');
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const body = await res.json();
+          const codes = Array.isArray(body.companies) ? body.companies : [];
+          select.innerHTML = '';
+          if (codes.length === 0) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(no companies configured)';
+            select.appendChild(opt);
+            info.textContent = 'Add a directory under DATA_ROOT and restart the server.';
+            return;
+          }
+          for (const code of codes) {
+            const opt = document.createElement('option');
+            opt.value = code;
+            opt.textContent = code;
+            select.appendChild(opt);
+          }
+          select.value = codes[0];
+          b.disabled = false;
+          document.getElementById('p').focus();
+        } catch (err) {
+          info.textContent = 'Could not load company list: ' + (err.message || err);
+        }
+      }
+
+      loadCompanies();
+
       f.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         e.textContent = '';
@@ -65,7 +111,10 @@
           const res = await fetch('/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: f.password.value }),
+            body: JSON.stringify({
+              password: f.password.value,
+              company: select.value,
+            }),
           });
           if (res.ok) {
             location.href = '/';

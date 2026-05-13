@@ -11,7 +11,8 @@ beforeEach(() => {
   process.env = { ...originalEnv };
   // Wipe vars under test
   delete process.env.PORT;
-  delete process.env.DATABASE_PATH;
+  delete process.env.DATA_ROOT;
+  delete process.env.LEGACY_DATA_ROOT;
   delete process.env.LOGIN_PASSWORD;
   delete process.env.SESSION_SECRET;
   delete process.env.OPERA_ADAPTER;
@@ -39,22 +40,27 @@ describe('loadConfig', () => {
 
   it('returns defaults when only LOGIN_PASSWORD is set', () => {
     process.env.LOGIN_PASSWORD = 'secret';
+    process.env.DATA_ROOT = tmpHome;
     const cfg = loadConfig({ dataDir: tmpHome });
     expect(cfg.port).toBe(3000);
-    expect(cfg.databasePath).toBe(join(tmpHome, 'gocardless.sqlite'));
+    expect(cfg.dataRoot).toBe(tmpHome);
+    expect(cfg.legacyDataRoot).toBeNull();
     expect(cfg.loginPassword).toBe('secret');
     expect(cfg.operaAdapter).toBe('noop');
     expect(cfg.trustProxy).toBe('loopback, linklocal, uniquelocal');
     expect(cfg.sessionSecret).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('respects PORT and OPERA_ADAPTER overrides', () => {
+  it('respects PORT, OPERA_ADAPTER, and LEGACY_DATA_ROOT overrides', () => {
     process.env.LOGIN_PASSWORD = 'secret';
     process.env.PORT = '4000';
     process.env.OPERA_ADAPTER = 'noop';
+    process.env.DATA_ROOT = tmpHome;
+    process.env.LEGACY_DATA_ROOT = '/tmp/legacy-data';
     const cfg = loadConfig({ dataDir: tmpHome });
     expect(cfg.port).toBe(4000);
     expect(cfg.operaAdapter).toBe('noop');
+    expect(cfg.legacyDataRoot).toBe('/tmp/legacy-data');
   });
 
   it('respects TRUST_PROXY override', () => {

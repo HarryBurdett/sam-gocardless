@@ -2,8 +2,11 @@
  * Standalone host auth: shared-password login + signed-cookie sessions.
  *
  * Exports:
- *   - loginRouter(config): POST /login, POST /logout.
+ *   - loginRouter(config, getCompanies): POST /login, POST /logout,
+ *     GET /companies (no auth — used by the login form).
  *   - requireAuth(config): middleware that gates everything after it.
+ *     Populates req.user, req.operaCompany, and the session-selected
+ *     `companyCode` for the dispatcher.
  *   - signSession / verifySession: pure helpers (exported for tests).
  *
  * Cookie format: <base64url(JSON payload)>.<hex(HMAC-SHA256 over payload)>
@@ -20,7 +23,18 @@ const HALF_AGE_MS = MAX_AGE_MS / 2;
 export interface SessionPayload {
   userId: string;
   email: string;
+  companyCode: string;
   issuedAt: number;
+}
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      /** Standalone company selected at login. Set by requireAuth. */
+      standaloneCompany?: string;
+    }
+  }
 }
 
 export function signSession(payload: SessionPayload, secret: string): string {
@@ -48,6 +62,9 @@ export function verifySession(
       Buffer.from(b64, 'base64url').toString('utf8'),
     ) as SessionPayload;
     if (typeof payload.issuedAt !== 'number') return null;
+    if (typeof payload.companyCode !== 'string' || payload.companyCode.length === 0) {
+      return null;
+    }
     const now = Date.now();
     // Reject future-dated sessions (clock skew tolerance: 60s).
     if (payload.issuedAt > now + 60_000) return null;
@@ -109,24 +126,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export function loginRouter(config: StandaloneConfig): Router {
+/**
+ * Build the auth router.
+ *
+ * @param config         standalone config (loginPassword + sessionSecret).
+ * @param getCompanies   returns the current list of known company codes.
+ *                       Called per request so the login form always shows
+ *                       the live set (in case a company is added at runtime).
+ */
+export function loginRouter(
+  config: StandaloneConfig,
+  getCompanies: () => string[],
+): Router {
   const router = Router();
+
+  router.get('/companies', (_req: Request, res: Response) => {
+    res.status(200).json({ companies: getCompanies() });
+  });
 
   router.post('/login', async (req: Request, res: Response) => {
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const ok = timingSafeEqualStr(password, config.loginPassword);
-    if (!ok) {
+    const company = typeof req.body?.company === 'string' ? req.body.company : '';
+    const allowed = getCompanies();
+    const passwordOk = timingSafeEqualStr(password, config.loginPassword);
+    const companyOk = allowed.includes(company);
+    if (!passwordOk || !companyOk) {
       await sleep(1000);
-      res.status(401).json({ error: 'invalid password' });
+      if (!passwordOk) {
+        res.status(401).json({ error: 'invalid password' });
+      } else {
+        res.status(400).json({ error: `unknown company: ${company}` });
+      }
       return;
     }
     const payload: SessionPayload = {
       userId: 'local',
       email: 'local@standalone',
+      companyCode: company,
       issuedAt: Date.now(),
     };
     setSessionCookie(res, payload, config.sessionSecret, req.protocol === 'https');
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, company });
   });
 
   router.post('/logout', (_req: Request, res: Response) => {
@@ -167,11 +207,15 @@ export function requireAuth(config: StandaloneConfig) {
       email: payload.email,
       role: 'admin',
       userType: 'tenant-admin',
-      tenantId: 'standalone',
+      tenantId: `standalone:${payload.companyCode}`,
       permissions: ['opera:read', 'opera:write', 'sam:config:read'],
     };
-    const company = req.header('X-Opera-Company');
-    if (company) req.operaCompany = company;
+    req.standaloneCompany = payload.companyCode;
+    // req.operaCompany is the Opera-company concept inside the plugin.
+    // In standalone, the selected company IS the Opera company unless the
+    // caller explicitly overrides via the header.
+    const headerCompany = req.header('X-Opera-Company');
+    req.operaCompany = headerCompany ?? payload.companyCode;
     next();
   };
 }

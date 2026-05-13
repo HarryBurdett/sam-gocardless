@@ -12,14 +12,28 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export interface StandaloneConfig {
   port: number;
-  databasePath: string;
+  /**
+   * Parent directory under which each company's per-company SQLite
+   * file lives at `<dataRoot>/<companyCode>/gocardless.sqlite`.
+   */
+  dataRoot: string;
+  /**
+   * Optional second directory scanned for legacy company layouts
+   * (`<root>/<companyCode>/gocardless/gocardless_settings.json`).
+   * When set, companies present in the legacy root but missing in
+   * `dataRoot` are auto-created with stub directories, and any new
+   * company whose settings table is empty gets seeded from the
+   * legacy JSON file. Null disables legacy migration entirely.
+   */
+  legacyDataRoot: string | null;
   loginPassword: string;
   sessionSecret: string;
   operaAdapter: string;
+  /** Internal dir for .session-secret etc. (separate from per-company data). */
   dataDir: string;
   /**
    * Value passed verbatim to Express's `app.set('trust proxy', …)`.
@@ -53,10 +67,15 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
     throw new Error(`Invalid PORT: ${process.env.PORT}`);
   }
 
-  const databasePath = process.env.DATABASE_PATH
-    ? resolve(process.env.DATABASE_PATH)
-    : join(dataDir, 'gocardless.sqlite');
-  mkdirSync(dirname(databasePath), { recursive: true });
+  const dataRoot = process.env.DATA_ROOT
+    ? resolve(process.env.DATA_ROOT)
+    : resolve(process.cwd(), 'data');
+  mkdirSync(dataRoot, { recursive: true });
+
+  const legacyDataRoot =
+    process.env.LEGACY_DATA_ROOT && process.env.LEGACY_DATA_ROOT.length > 0
+      ? resolve(process.env.LEGACY_DATA_ROOT)
+      : null;
 
   const sessionSecret = resolveSessionSecret(dataDir);
   const operaAdapter = process.env.OPERA_ADAPTER ?? 'noop';
@@ -67,7 +86,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
 
   return {
     port,
-    databasePath,
+    dataRoot,
+    legacyDataRoot,
     loginPassword,
     sessionSecret,
     operaAdapter,
