@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,10 @@ beforeEach(() => {
   delete process.env.SESSION_SECRET;
   delete process.env.OPERA_ADAPTER;
   tmpHome = mkdtempSync(join(tmpdir(), 'sgc-config-'));
+});
+
+afterEach(() => {
+  rmSync(tmpHome, { recursive: true, force: true });
 });
 
 afterAll(() => {
@@ -70,7 +74,4 @@ describe('loadConfig', () => {
     expect(cfg.sessionSecret).toBe('explicit-secret');
   });
 
-  it('cleans up tmp dirs', () => {
-    rmSync(tmpHome, { recursive: true, force: true });
-  });
 });

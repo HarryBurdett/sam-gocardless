@@ -67,11 +67,24 @@ function resolveSessionSecret(dataDir: string): string {
     return process.env.SESSION_SECRET;
   }
   const secretFile = join(dataDir, '.session-secret');
-  if (existsSync(secretFile)) {
-    const value = readFileSync(secretFile, 'utf8').trim();
-    if (value.length > 0) return value;
-  }
+  const existing = tryReadSecret(secretFile);
+  if (existing) return existing;
+
   const generated = randomBytes(32).toString('hex');
-  writeFileSync(secretFile, generated, { mode: 0o600 });
-  return generated;
+  try {
+    writeFileSync(secretFile, generated, { mode: 0o600, flag: 'wx' });
+    return generated;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      const racedValue = tryReadSecret(secretFile);
+      if (racedValue) return racedValue;
+    }
+    throw err;
+  }
+}
+
+function tryReadSecret(path: string): string | null {
+  if (!existsSync(path)) return null;
+  const value = readFileSync(path, 'utf8').trim();
+  return value.length > 0 ? value : null;
 }
