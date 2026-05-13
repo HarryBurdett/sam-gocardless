@@ -175,6 +175,12 @@ export async function loadCompany(
     });
     await runMigrations(appDb);
     await seedFromLegacyIfEmpty(appDb, opts.legacyDataRoot, code, opts.logger);
+    await seedTablesFromLegacyPaymentsDb(
+      appDb,
+      opts.legacyDataRoot,
+      code,
+      opts.logger,
+    );
 
     samDb = knex({
       client: 'sqlite3',
@@ -215,6 +221,142 @@ export async function loadCompany(
  * src/services/settings.ts), so we mirror that — one row, JSON-encoded body.
  */
 const SETTINGS_KEY = 'gocardless_settings';
+
+/**
+ * Tables to migrate from the legacy gocardless_payments.db, in order.
+ * Each new-side table has the same name as the legacy table; the column
+ * sets overlap heavily but not perfectly. We copy the column intersection
+ * minus `id` (autoincrement, regenerated on insert), and apply per-table
+ * tweaks for fields the new schema represents differently.
+ */
+const PAYMENT_TABLES: ReadonlyArray<string> = [
+  'gocardless_mandates',
+  'gocardless_partner_signups',
+  'gocardless_payment_requests',
+  'gocardless_subscriptions',
+  'gocardless_subscription_documents',
+  'mandate_setup_requests',
+];
+
+/**
+ * Copy rows from <legacy>/<code>/gocardless/gocardless_payments.db into
+ * the new per-company SQLite. Runs only if the destination's mandate
+ * table is empty (idempotent — re-runs against a non-empty destination
+ * are a no-op). Each table inside is copied independently; failures on
+ * one table are logged but don't abort the rest.
+ */
+async function seedTablesFromLegacyPaymentsDb(
+  appDb: Knex,
+  legacyDataRoot: string | null,
+  code: string,
+  logger: AppLogger,
+): Promise<void> {
+  if (!legacyDataRoot) return;
+  const legacyFile = resolve(legacyDataRoot, code, 'gocardless', 'gocardless_payments.db');
+  if (!existsSync(legacyFile)) return;
+
+  const existing = await appDb('gocardless_mandates').count<{ c: number }[]>('* as c');
+  if (Number(existing[0]?.c ?? 0) > 0) return;
+
+  const legacyDb = knex({
+    client: 'sqlite3',
+    connection: { filename: legacyFile },
+    useNullAsDefault: true,
+    pool: { min: 1, max: 1 },
+  });
+  try {
+    for (const table of PAYMENT_TABLES) {
+      await copyTable(legacyDb, appDb, table, code, logger);
+    }
+  } finally {
+    await legacyDb.destroy();
+  }
+}
+
+async function copyTable(
+  legacy: Knex,
+  app: Knex,
+  table: string,
+  code: string,
+  logger: AppLogger,
+): Promise<void> {
+  if (!(await legacy.schema.hasTable(table))) return;
+  if (!(await app.schema.hasTable(table))) return;
+
+  const rows = (await legacy(table).select()) as Array<Record<string, unknown>>;
+  if (rows.length === 0) return;
+
+  const destColumns = new Set(
+    (
+      (await app.raw(`PRAGMA table_info(${table})`)) as Array<{ name: string }>
+    ).map((c) => c.name),
+  );
+
+  const mapped = rows.map((row) => projectRow(row, destColumns, table));
+
+  // Fast path: bulk insert inside a transaction. Falls back to row-by-row
+  // when a unique-constraint or similar conflict aborts the bulk path
+  // (legacy data sometimes contains the same mandate under both
+  // `__UNLINKED__` and a real opera_account — only one survives in the
+  // new schema's tighter uniqueness rules).
+  try {
+    await app.transaction(async (trx) => {
+      const BATCH = 200;
+      for (let i = 0; i < mapped.length; i += BATCH) {
+        await trx(table).insert(mapped.slice(i, i + BATCH));
+      }
+    });
+    logger.info(`[${code}] migrated ${rows.length} rows from ${table}`);
+    return;
+  } catch (err) {
+    // Suppress the full SQL knex dumps; the row-by-row pass below will
+    // log a clean summary of inserted vs skipped.
+    logger.debug(
+      `[${code}] bulk insert into ${table} hit a conflict; retrying row-by-row`,
+    );
+    void err;
+  }
+
+  let inserted = 0;
+  let skipped = 0;
+  for (const row of mapped) {
+    try {
+      await app(table).insert(row);
+      inserted++;
+    } catch {
+      skipped++;
+    }
+  }
+  logger.info(
+    `[${code}] migrated ${inserted}/${rows.length} rows from ${table}` +
+      (skipped > 0 ? ` (${skipped} skipped due to conflicts)` : ''),
+  );
+}
+
+function projectRow(
+  row: Record<string, unknown>,
+  destColumns: Set<string>,
+  table: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (k === 'id') continue; // autoincrement: regenerated
+    if (!destColumns.has(k)) continue;
+    out[k] = v;
+  }
+  // Special: legacy payment_requests stores amount_pence (INTEGER) only;
+  // new schema has a denormalised `amount` (REAL) too. Derive it so the
+  // UI's display layer doesn't render null.
+  if (
+    table === 'gocardless_payment_requests' &&
+    destColumns.has('amount') &&
+    typeof row.amount_pence === 'number' &&
+    row.amount_pence !== null
+  ) {
+    out.amount = (row.amount_pence as number) / 100;
+  }
+  return out;
+}
 
 async function seedFromLegacyIfEmpty(
   appDb: Knex,
