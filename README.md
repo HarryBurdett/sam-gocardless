@@ -135,14 +135,28 @@ All of this is idempotent — re-runs are no-ops once the destination has data.
 | `LEGACY_COMPANIES_DIR` | `<LEGACY_DATA_ROOT>/../companies` | Source of legacy `<code>.json` files for seeding `opera.json` |
 | `LOGIN_PASSWORD` | _required_ | Shared password for the login form |
 | `SESSION_SECRET` | auto-generated to `<DATA_ROOT>/.session-secret` | Cookie signing key |
-| `OPERA_ADAPTER` | `noop` | `noop` or `mssql` |
-| `OPERA_SQL_HOST` | _required when `mssql`_ | Opera SQL server host |
+| `OPERA_ADAPTER` | `noop` | `noop`, `mssql`, `opera3`, or `composite` |
+| `OPERA_SQL_HOST` | _required when `mssql`/`composite`_ | Opera SQL server host |
 | `OPERA_SQL_PORT` | `1433` | Opera SQL server port |
-| `OPERA_SQL_USER` | _required when `mssql`_ | SQL Server username |
-| `OPERA_SQL_PASSWORD` | _required when `mssql`_ | SQL Server password |
+| `OPERA_SQL_USER` | _required when `mssql`/`composite`_ | SQL Server username |
+| `OPERA_SQL_PASSWORD` | _required when `mssql`/`composite`_ | SQL Server password |
 | `OPERA_SQL_TRUST_CERT` | `true` | Trust the server's TLS cert (Opera SE typically uses a self-signed cert) |
 | `OPERA_SQL_ENCRYPT` | `true` | TLS-encrypt the connection. Set `false` for IP-only Opera servers (tedious rejects IP as TLS ServerName) |
+| `OPERA3_AGENT_URL` | _unset_ | Reserved — URL of the future opera-3 read/write agent (HTTP service that wraps VFP/FoxPro DBF access). The bundled opera-3 adapter is a scaffold; agent integration is pending. |
+| `OPERA3_AGENT_KEY` | _unset_ | Reserved — shared secret for the opera-3 agent service. |
+| `OPERA3_DATA_PATH` | _unset_ | Reserved — local mount of the Opera 3 SMB share, if the future agent reads files directly. |
 | `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Passed verbatim to Express's `app.set('trust proxy', …)` |
+
+### Adapter modes
+
+| Mode | What it does | Use it when |
+|---|---|---|
+| `noop` | Returns null for every `getCompanyDb()` call. Plugin's Opera-backed endpoints surface "Opera not connected" errors; everything that's `db.app`-only (settings, mandates registry, payment requests) still works. | You're configuring settings or porting data, no live Opera connection needed. |
+| `mssql` | Per-company Knex pool against Opera SQL Server. Companies whose `opera.json` has `operaVersion: "3"` are skipped. | Everything you have is on Opera SE. |
+| `opera3` | Scaffold for Opera 3 (VFP/FoxPro) access via an external agent service. Not yet implemented — returns null with a warn log. | Reserved for future opera-3 integration. |
+| `composite` | Routes per-company: SE → MSSQL pool, 3 → opera-3 agent. | Mixed deployment where some companies are Opera SE and others are Opera 3. |
+
+Per-company `operaVersion` is set via the **Settings → System connection** panel ("Edit Opera mapping") or by directly editing `<DATA_ROOT>/<company>/opera.json`. The change takes effect immediately — no restart required.
 
 ### Behind a reverse proxy
 

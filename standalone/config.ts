@@ -41,6 +41,7 @@ export interface StandaloneConfig {
   sessionSecret: string;
   operaAdapter: string;
   mssql: MssqlEnv | null;
+  opera3: Opera3Env | null;
   /** Internal dir for .session-secret etc. (separate from per-company data). */
   dataDir: string;
   /**
@@ -61,6 +62,12 @@ export interface MssqlEnv {
   password: string;
   trustServerCertificate: boolean;
   encrypt: boolean;
+}
+
+export interface Opera3Env {
+  agentUrl: string | null;
+  agentKey: string | null;
+  dataPath: string | null;
 }
 
 export interface LoadConfigOptions {
@@ -103,7 +110,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
 
   const sessionSecret = resolveSessionSecret(dataDir);
   const operaAdapter = process.env.OPERA_ADAPTER ?? 'noop';
-  const mssql = operaAdapter === 'mssql' ? loadMssqlEnv() : null;
+  const mssql =
+    operaAdapter === 'mssql' || operaAdapter === 'composite' ? loadMssqlEnv() : null;
+  const opera3 =
+    operaAdapter === 'opera3' || operaAdapter === 'composite' ? loadOpera3Env() : null;
   const trustProxy =
     process.env.TRUST_PROXY && process.env.TRUST_PROXY.length > 0
       ? process.env.TRUST_PROXY
@@ -118,8 +128,26 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
     sessionSecret,
     operaAdapter,
     mssql,
+    opera3,
     dataDir,
     trustProxy,
+  };
+}
+
+function loadOpera3Env(): Opera3Env {
+  return {
+    agentUrl:
+      process.env.OPERA3_AGENT_URL && process.env.OPERA3_AGENT_URL.length > 0
+        ? process.env.OPERA3_AGENT_URL
+        : null,
+    agentKey:
+      process.env.OPERA3_AGENT_KEY && process.env.OPERA3_AGENT_KEY.length > 0
+        ? process.env.OPERA3_AGENT_KEY
+        : null,
+    dataPath:
+      process.env.OPERA3_DATA_PATH && process.env.OPERA3_DATA_PATH.length > 0
+        ? process.env.OPERA3_DATA_PATH
+        : null,
   };
 }
 

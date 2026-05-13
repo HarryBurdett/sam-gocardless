@@ -43,6 +43,11 @@ interface SystemInfo {
     encrypt: boolean;
     trust_server_certificate: boolean;
   };
+  opera3: null | {
+    agent_url: string | null;
+    agent_key_configured: boolean;
+    data_path: string | null;
+  };
   data_root: string;
   legacy_data_root: string | null;
   company_loaded: boolean;
@@ -248,10 +253,43 @@ function SystemConnectionPanel(_props: { appLabel: string }) {
                   </dd>
                 </div>
               </>
-            ) : (
+            ) : info.adapter !== 'opera3' && info.adapter !== 'composite' ? (
               <div className="sm:col-span-2 text-gray-500 italic">
                 Adapter is <span className="font-mono">{info.adapter}</span> — no MSSQL connection configured. Opera-backed endpoints will surface "Opera not connected" errors. Set <span className="font-mono">OPERA_ADAPTER=mssql</span> plus the <span className="font-mono">OPERA_SQL_*</span> env vars to enable.
               </div>
+            ) : null}
+            {info.opera3 && (
+              <>
+                <div className="sm:col-span-2 pt-2 border-t border-gray-100 mt-1">
+                  <dt className="text-xs uppercase tracking-wide text-gray-500 font-medium mt-2">
+                    Opera 3 agent
+                  </dt>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs text-gray-500">Agent URL</dt>
+                  <dd className="text-gray-900 font-mono text-xs">
+                    {info.opera3.agent_url ?? (
+                      <span className="text-amber-700">not set — opera-3 reads/writes disabled</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Agent key</dt>
+                  <dd className="text-gray-900 font-medium">
+                    {info.opera3.agent_key_configured ? (
+                      <span className="text-green-600">configured</span>
+                    ) : (
+                      <span className="text-gray-400">not set</span>
+                    )}
+                  </dd>
+                </div>
+                {info.opera3.data_path && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-gray-500">Data path</dt>
+                    <dd className="text-gray-900 font-mono text-xs">{info.opera3.data_path}</dd>
+                  </div>
+                )}
+              </>
             )}
             <div className="sm:col-span-2 pt-2 border-t border-gray-100 mt-1">
               <dt className="text-xs uppercase tracking-wide text-gray-500 font-medium mt-2">Paths</dt>

@@ -59,11 +59,19 @@ export interface SelectAdapterOptions {
     /** companyCode → { database, operaVersion } */
     companies: ReadonlyMap<string, { database: string; operaVersion?: string }>;
   };
+  opera3?: {
+    agentUrl: string | null;
+    agentKey: string | null;
+    dataPath: string | null;
+    /** companyCode → { database, operaVersion } */
+    companies: ReadonlyMap<string, { database: string; operaVersion?: string }>;
+  };
   logger: AppLogger;
 }
 
 export async function selectAdapter(opts: SelectAdapterOptions): Promise<OperaAdapter> {
   if (opts.name === 'noop') return noOpAdapter;
+
   if (opts.name === 'mssql') {
     if (!opts.mssql) {
       throw new Error(
@@ -80,5 +88,47 @@ export async function selectAdapter(opts: SelectAdapterOptions): Promise<OperaAd
     const { buildMssqlAdapter } = await import('./opera-adapter-mssql.js');
     return buildMssqlAdapter({ ...opts.mssql, logger: opts.logger });
   }
+
+  if (opts.name === 'opera3') {
+    if (!opts.opera3) {
+      throw new Error('OPERA_ADAPTER=opera3 requires opera3 config (companies map).');
+    }
+    const { buildOpera3Adapter } = await import('./opera-adapter-opera3.js');
+    return buildOpera3Adapter({ ...opts.opera3, logger: opts.logger });
+  }
+
+  if (opts.name === 'composite') {
+    // Dispatch per-company by operaVersion: SE → MSSQL pool, 3 →
+    // opera-3 agent. Used when a deployment has mixed Opera versions
+    // across its companies (the common future case once a real
+    // opera-3 adapter lands).
+    if (!opts.mssql || !opts.opera3) {
+      throw new Error(
+        'OPERA_ADAPTER=composite requires both the mssql and opera3 config blocks.',
+      );
+    }
+    const { buildMssqlAdapter } = await import('./opera-adapter-mssql.js');
+    const { buildOpera3Adapter } = await import('./opera-adapter-opera3.js');
+    const mssql = buildMssqlAdapter({ ...opts.mssql, logger: opts.logger });
+    const opera3 = buildOpera3Adapter({ ...opts.opera3, logger: opts.logger });
+    return {
+      operaType: null, // mixed
+      getCompanyDb(code) {
+        // Each child adapter already filters by operaVersion, so we
+        // try mssql first; if it returns null we try opera3. (Inverse
+        // order would work equally — they're disjoint.)
+        return mssql.getCompanyDb(code) ?? opera3.getCompanyDb(code);
+      },
+      async invalidateCompany(code, mapping) {
+        await mssql.invalidateCompany?.(code, mapping);
+        await opera3.invalidateCompany?.(code, mapping);
+      },
+      async destroy() {
+        await mssql.destroy?.();
+        await opera3.destroy?.();
+      },
+    };
+  }
+
   throw new Error(`Unknown OPERA_ADAPTER: ${opts.name}`);
 }

@@ -104,6 +104,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     mssql: config.mssql
       ? { ...config.mssql, companies: operaCompanies }
       : undefined,
+    opera3: config.opera3
+      ? { ...config.opera3, companies: operaCompanies }
+      : undefined,
   });
 
   const companies = new Map<string, CompanyInstance>();
@@ -208,6 +211,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
             password_configured: Boolean(config.mssql.password),
             encrypt: config.mssql.encrypt,
             trust_server_certificate: config.mssql.trustServerCertificate,
+          }
+        : null,
+      opera3: config.opera3
+        ? {
+            agent_url: config.opera3.agentUrl,
+            agent_key_configured: Boolean(config.opera3.agentKey),
+            data_path: config.opera3.dataPath,
           }
         : null,
       data_root: config.dataRoot,
