@@ -127,6 +127,44 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Per-IP failed-login counter. Sliding window: failures decay after
+ * WINDOW_MS. After MAX_FAILS within a window, further attempts from
+ * that IP get a 429 until the window resets. In-memory only — the
+ * standalone server is a single process. A reverse proxy with
+ * fail2ban or similar should still be used for serious deployments.
+ */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 min
+const LOGIN_MAX_FAILS = 10;
+
+class LoginRateLimiter {
+  private failures = new Map<string, { count: number; firstAt: number }>();
+
+  isBlocked(ip: string): boolean {
+    const entry = this.failures.get(ip);
+    if (!entry) return false;
+    if (Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+      this.failures.delete(ip);
+      return false;
+    }
+    return entry.count >= LOGIN_MAX_FAILS;
+  }
+
+  recordFailure(ip: string): void {
+    const now = Date.now();
+    const entry = this.failures.get(ip);
+    if (!entry || now - entry.firstAt > LOGIN_WINDOW_MS) {
+      this.failures.set(ip, { count: 1, firstAt: now });
+    } else {
+      entry.count++;
+    }
+  }
+
+  recordSuccess(ip: string): void {
+    this.failures.delete(ip);
+  }
+}
+
+/**
  * Build the auth router.
  *
  * @param config         standalone config (loginPassword + sessionSecret).
@@ -139,12 +177,21 @@ export function loginRouter(
   getCompanies: () => string[],
 ): Router {
   const router = Router();
+  const limiter = new LoginRateLimiter();
 
   router.get('/companies', (_req: Request, res: Response) => {
     res.status(200).json({ companies: getCompanies() });
   });
 
   router.post('/login', async (req: Request, res: Response) => {
+    const ip = req.ip ?? 'unknown';
+    if (limiter.isBlocked(ip)) {
+      res
+        .status(429)
+        .json({ error: 'too many failed attempts; try again later' });
+      return;
+    }
+
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const company = typeof req.body?.company === 'string' ? req.body.company : '';
     const allowed = getCompanies();
@@ -152,6 +199,7 @@ export function loginRouter(
     const companyOk = allowed.includes(company);
     if (!passwordOk || !companyOk) {
       await sleep(1000);
+      limiter.recordFailure(ip);
       if (!passwordOk) {
         res.status(401).json({ error: 'invalid password' });
       } else {
@@ -159,6 +207,7 @@ export function loginRouter(
       }
       return;
     }
+    limiter.recordSuccess(ip);
     const payload: SessionPayload = {
       userId: 'local',
       email: 'local@standalone',

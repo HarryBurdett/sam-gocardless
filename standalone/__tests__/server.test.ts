@@ -46,6 +46,15 @@ afterAll(async () => {
 });
 
 describe('server (multi-company)', () => {
+  it('GET /healthz (no auth) returns ok + company list', async () => {
+    const res = await fetch(`${url}/healthz`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.companies.sort()).toEqual(['cloudsis', 'intsys']);
+    expect(body.adapter).toBe('noop');
+  });
+
   it('serves /login.html without auth', async () => {
     const res = await fetch(`${url}/login.html`);
     expect(res.status).toBe(200);

@@ -129,6 +129,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // /healthz — liveness/readiness probe. Cheap, no auth, no DB hit.
+  // Reverse proxies / orchestrators can use this without holding a
+  // session.
+  app.get('/healthz', (_req, res) => {
+    res.json({
+      ok: true,
+      companies: Array.from(companies.keys()),
+      adapter: config.operaAdapter,
+    });
+  });
+
   // /login.html — explicit, before auth.
   app.get('/login.html', (_req, res) => {
     res.sendFile(resolve(PUBLIC_DIR, 'login.html'));
@@ -195,8 +206,8 @@ function makeDispatcher(companies: Map<string, CompanyInstance>): Router {
 }
 
 async function main(): Promise<void> {
-  const { app, config, companies } = await buildApp();
-  app.listen(config.port, () => {
+  const { app, config, companies, operaAdapter } = await buildApp();
+  const server = app.listen(config.port, () => {
     console.log(`\n[standalone] listening on http://localhost:${config.port}`);
     console.log(`[standalone] data root:  ${config.dataRoot}`);
     if (config.legacyDataRoot) {
@@ -211,6 +222,27 @@ async function main(): Promise<void> {
       console.log(`[standalone] mssql:      ${config.mssql.user}@${config.mssql.host}:${config.mssql.port}`);
     }
   });
+
+  let shuttingDown = false;
+  async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n[standalone] ${signal} received — shutting down`);
+    server.close((err) => {
+      if (err) console.error('[standalone] http close error:', err);
+    });
+    // Drain Knex pools.
+    for (const c of companies.values()) {
+      await c.samDb.destroy().catch(() => {});
+      await c.appDb.destroy().catch(() => {});
+    }
+    if (operaAdapter.destroy) {
+      await operaAdapter.destroy().catch(() => {});
+    }
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
 // Run only when invoked as the entry point, not when imported by tests.
