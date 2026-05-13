@@ -16,6 +16,8 @@ import {
   CreditCard,
   Send,
   Settings as SettingsIcon,
+  Activity,
+  RotateCcw,
   LogOut,
 } from 'lucide-react';
 import type { SamPluginContext } from './sam';
@@ -24,12 +26,22 @@ import { GoCardlessImport } from './GoCardlessImport';
 import GoCardlessRequests from './Requests';
 import { GoCardlessSettings } from './Settings';
 import { GoCardlessCallback } from './PartnerCallback';
+import { HealthCheck } from './HealthCheck';
+import { Cleardown } from './Cleardown';
 
-type Tab = 'import' | 'requests' | 'settings' | 'callback';
+type Tab =
+  | 'import'
+  | 'requests'
+  | 'health'
+  | 'cleardown'
+  | 'settings'
+  | 'callback';
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: 'import', label: 'Import', icon: CreditCard },
-  { id: 'requests', label: 'Requests / Mandates', icon: Send },
+  { id: 'requests', label: 'Payment Requests', icon: Send },
+  { id: 'health', label: 'Health Check', icon: Activity },
+  { id: 'cleardown', label: 'Cleardown', icon: RotateCcw },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -116,9 +128,15 @@ export default function GoCardless({ context }: { context: SamPluginContext }) {
           <div className="max-w-7xl mx-auto px-6 py-6">
             {tab === 'import' && <GoCardlessImport />}
             {tab === 'requests' && <GoCardlessRequests />}
+            {tab === 'health' && <HealthCheck appFilter="gocardless" />}
+            {tab === 'cleardown' && <Cleardown appFilter="gocardless" />}
             {tab === 'settings' && <GoCardlessSettings />}
             {tab === 'callback' && (
-              <GoCardlessCallback onNavigate={(t) => setTab(t === 'import' ? 'import' : t === 'settings' ? 'settings' : 'requests')} />
+              <GoCardlessCallback
+                onNavigate={(t) =>
+                  setTab(t === 'import' ? 'import' : t === 'settings' ? 'settings' : 'requests')
+                }
+              />
             )}
           </div>
         </div>

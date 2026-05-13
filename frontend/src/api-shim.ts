@@ -108,7 +108,7 @@ const apiClient = {
 export async function authFetch(
   path: string,
   init: RequestInit = {},
-): Promise<{ ok: boolean; status: number; json: () => Promise<any> }> {
+): Promise<{ ok: boolean; status: number; statusText: string; json: () => Promise<any> }> {
   if (!samApi) {
     throw new Error('SAM API not initialised — call setSamApi(context.api) first.');
   }
@@ -118,12 +118,14 @@ export async function authFetch(
   };
   try {
     const data = await samApi.fetch<unknown>(path, { ...init, headers });
-    return { ok: true, status: 200, json: async () => data };
+    return { ok: true, status: 200, statusText: 'OK', json: async () => data };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       status: 500,
-      json: async () => ({ error: err instanceof Error ? err.message : String(err) }),
+      statusText: message,
+      json: async () => ({ error: message }),
     };
   }
 }
