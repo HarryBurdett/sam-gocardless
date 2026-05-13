@@ -77,3 +77,29 @@ npm run build
 
 Tailwind utilities are scoped to `.gocardless-app` to keep them
 out of the host CSS.
+
+## Standalone mode
+
+To run the plugin without a SAM host:
+
+```sh
+npm install
+npm run build                              # builds dist/ + frontend/dist/
+LOGIN_PASSWORD=<choose-a-strong-one> npm run start
+```
+
+Then open `http://localhost:3000`, log in with the password you set, and use the GoCardless wizard. Data persists in `./data/gocardless.sqlite`.
+
+Configurable env vars:
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP port |
+| `DATABASE_PATH` | `./data/gocardless.sqlite` | SQLite file location |
+| `LOGIN_PASSWORD` | _required_ | Shared password for the login form |
+| `SESSION_SECRET` | auto-generated to `./data/.session-secret` | Cookie signing key |
+| `OPERA_ADAPTER` | `noop` | Opera connection adapter (only `noop` is shipped — Opera-backed endpoints return errors) |
+
+The standalone host is a sibling of, not a replacement for, the SAM plugin contract. `src/`, `frontend/`, `db/migrations/`, and `manifest.json` are unchanged — SAM continues to consume this repo as a plugin without any adapter shim.
+
+⚠️ The standalone host has no TLS, no rate limiting, and no IP allowlist. Put a reverse proxy in front of it for anything beyond a private network.
