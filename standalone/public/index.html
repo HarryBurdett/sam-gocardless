@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GoCardless Import</title>
+    <link rel="stylesheet" href="/api/apps/gocardless/static/style.css" />
+    <style>
+      html, body, #app { height: 100%; margin: 0; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <script>
+      window.__SAM_SHARED__ = { react: window.React, reactDom: window.ReactDOM };
+    </script>
+
+    <script src="/api/apps/gocardless/static/index.js"></script>
+
+    <script>
+      (function () {
+        const entry = window.__SAM_APPS__ && window.__SAM_APPS__['gocardless'];
+        if (!entry) {
+          document.getElementById('app').innerText =
+            'Failed to load plugin bundle.';
+          return;
+        }
+        const BASE = '/api/apps/gocardless';
+        async function samFetch(path, options) {
+          const url = path.startsWith('/') ? BASE + path : BASE + '/' + path;
+          const res = await fetch(url, options || {});
+          const text = await res.text();
+          let parsed = null;
+          if (text) {
+            try { parsed = JSON.parse(text); } catch { parsed = text; }
+          }
+          if (res.status === 401) {
+            location.href = '/login.html';
+            throw new Error('not authenticated');
+          }
+          if (!res.ok) {
+            const msg =
+              (parsed && typeof parsed === 'object' && parsed.error) ||
+              (typeof parsed === 'string' && parsed) ||
+              ('HTTP ' + res.status);
+            throw new Error(msg);
+          }
+          return parsed;
+        }
+        const context = {
+          appId: 'gocardless',
+          user: { userId: 'local', email: 'local@standalone', role: 'admin' },
+          token: null,
+          currentCompany: null,
+          api: { baseUrl: BASE, fetch: samFetch },
+          events: new EventTarget(),
+        };
+        const root = ReactDOM.createRoot(document.getElementById('app'));
+        root.render(React.createElement(entry.component, { context: context }));
+      })();
+    </script>
+  </body>
+</html>
