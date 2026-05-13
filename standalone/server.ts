@@ -16,9 +16,9 @@
  * AppContext and never imports this module.
  */
 import express, { type Express, type Router, type Request, type Response, type NextFunction } from 'express';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { loadConfig, type StandaloneConfig } from './config.js';
 import { loginRouter, requireAuth } from './auth.js';
 import { selectAdapter, type OperaAdapter } from './opera-adapter.js';
@@ -156,6 +156,56 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     res.json({
       user: req.user,
       company: req.standaloneCompany ?? null,
+    });
+  });
+
+  // Read-only system info for the Settings page — surfaces the
+  // Opera connection params and per-company database mapping so the
+  // operator can see what backend this host is wired up to without
+  // SSHing in to read env vars. Secrets are never returned; the
+  // password is reported only as a `configured` boolean.
+  app.get('/auth/system-info', (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    const company = code ? companies.get(code) : undefined;
+    let operaDatabase: string | null = null;
+    let operaVersion: string | null = null;
+    if (code) {
+      const operaFile = join(config.dataRoot, code, 'opera.json');
+      if (existsSync(operaFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(operaFile, 'utf8')) as {
+            database?: string;
+            operaVersion?: string;
+          };
+          operaDatabase = parsed.database ?? null;
+          operaVersion = parsed.operaVersion ?? null;
+        } catch {
+          // surface as null
+        }
+      }
+    }
+    res.json({
+      active_company: {
+        code,
+        opera_database: operaDatabase,
+        opera_version: operaVersion,
+      },
+      adapter: config.operaAdapter,
+      opera_sql: config.mssql
+        ? {
+            host: config.mssql.host,
+            port: config.mssql.port,
+            username: config.mssql.user,
+            password_configured: Boolean(config.mssql.password),
+            encrypt: config.mssql.encrypt,
+            trust_server_certificate: config.mssql.trustServerCertificate,
+          }
+        : null,
+      data_root: config.dataRoot,
+      legacy_data_root: config.legacyDataRoot,
+      // Has the Opera adapter ever opened a pool for this company?
+      // (lazy — pool is created on first getCompanyDb call)
+      company_loaded: Boolean(company),
     });
   });
 

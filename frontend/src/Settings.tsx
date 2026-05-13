@@ -21,8 +21,134 @@ function HelpPanel(_props: {
 }) {
   return null;
 }
+/**
+ * Read-only Opera connection diagnostic for the standalone host.
+ * Same role as the legacy SystemConnectionPanel: surfaces the
+ * MSSQL endpoint, per-company Opera database, and adapter mode so
+ * the operator can see what backend this host is wired up to
+ * without reading env vars off-system. Secrets are never shown.
+ */
 function SystemConnectionPanel(_props: { appLabel: string }) {
-  return null;
+  const [info, setInfo] = useState<null | {
+    active_company: { code: string | null; opera_database: string | null; opera_version: string | null };
+    adapter: string;
+    opera_sql: null | {
+      host: string;
+      port: number;
+      username: string;
+      password_configured: boolean;
+      encrypt: boolean;
+      trust_server_certificate: boolean;
+    };
+    data_root: string;
+    legacy_data_root: string | null;
+    company_loaded: boolean;
+  }>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/auth/system-info')
+      .then(async (r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(setInfo)
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
+        <Wifi className="h-4 w-4 text-gray-500" />
+        <h3 className="text-sm font-semibold text-gray-700">System connection</h3>
+      </div>
+      <div className="p-4 text-sm">
+        {error ? (
+          <p className="text-red-600">Could not load connection info: {error}</p>
+        ) : !info ? (
+          <p className="text-gray-500">Loading…</p>
+        ) : (
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
+            <div>
+              <dt className="text-xs text-gray-500">Active company</dt>
+              <dd className="text-gray-900 font-medium">{info.active_company.code ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500">Adapter</dt>
+              <dd className="text-gray-900 font-medium">{info.adapter}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500">Opera database</dt>
+              <dd className="text-gray-900 font-medium">
+                {info.active_company.opera_database ?? <span className="text-gray-400">(not set)</span>}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-500">Opera version</dt>
+              <dd className="text-gray-900 font-medium">{info.active_company.opera_version ?? '—'}</dd>
+            </div>
+            {info.opera_sql ? (
+              <>
+                <div className="sm:col-span-2 pt-2 border-t border-gray-100 mt-1">
+                  <dt className="text-xs uppercase tracking-wide text-gray-500 font-medium mt-2">
+                    Opera SQL server
+                  </dt>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Host</dt>
+                  <dd className="text-gray-900 font-medium">
+                    {info.opera_sql.host}:{info.opera_sql.port}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Username</dt>
+                  <dd className="text-gray-900 font-medium">{info.opera_sql.username}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">Password</dt>
+                  <dd className="text-gray-900 font-medium">
+                    {info.opera_sql.password_configured ? (
+                      <span className="text-green-600">configured</span>
+                    ) : (
+                      <span className="text-red-600">not configured</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-gray-500">TLS</dt>
+                  <dd className="text-gray-900 font-medium">
+                    {info.opera_sql.encrypt ? 'on' : 'off'}
+                    {info.opera_sql.trust_server_certificate && ' (trust self-signed)'}
+                  </dd>
+                </div>
+              </>
+            ) : (
+              <div className="sm:col-span-2 text-gray-500 italic">
+                Adapter is <span className="font-mono">{info.adapter}</span> — no MSSQL connection configured. Opera-backed endpoints will surface "Opera not connected" errors. Set <span className="font-mono">OPERA_ADAPTER=mssql</span> plus the <span className="font-mono">OPERA_SQL_*</span> env vars to enable.
+              </div>
+            )}
+            <div className="sm:col-span-2 pt-2 border-t border-gray-100 mt-1">
+              <dt className="text-xs uppercase tracking-wide text-gray-500 font-medium mt-2">Paths</dt>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-gray-500">Data root</dt>
+              <dd className="text-gray-900 font-mono text-xs">{info.data_root}</dd>
+            </div>
+            {info.legacy_data_root && (
+              <div className="sm:col-span-2">
+                <dt className="text-xs text-gray-500">Legacy data root</dt>
+                <dd className="text-gray-900 font-mono text-xs">{info.legacy_data_root}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+        <p className="text-xs text-gray-500 mt-4">
+          Connection details are read from environment variables at startup. To change them, edit the
+          env vars and restart the server.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 type OperaVersion = 'opera-sql' | 'opera3';
