@@ -15,6 +15,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = resolve(__dirname, '..', 'db', 'migrations');
 const TABLE = '_standalone_migrations';
 
+/**
+ * Apply unapplied migrations from db/migrations/ in lexical order.
+ * Each migration runs in its own transaction together with the
+ * tracker insert, so a mid-migration failure leaves the DB clean.
+ *
+ * NOT safe for concurrent invocation against the same database —
+ * ensureTable is a simple hasTable + createTable, with no advisory
+ * lock. The standalone server calls runMigrations once at boot.
+ */
 export async function runMigrations(db: Knex): Promise<void> {
   await ensureTable(db);
   const files = (await readdir(MIGRATIONS_DIR))
@@ -26,8 +35,13 @@ export async function runMigrations(db: Knex): Promise<void> {
     const mod = (await import(resolve(MIGRATIONS_DIR, file))) as {
       up: (k: Knex) => Promise<void>;
     };
-    await mod.up(db);
-    await db(TABLE).insert({ name: file, applied_at: new Date().toISOString() });
+    await db.transaction(async (trx) => {
+      await mod.up(trx);
+      await trx(TABLE).insert({
+        name: file,
+        applied_at: new Date().toISOString(),
+      });
+    });
   }
 }
 

@@ -37,10 +37,13 @@ describe('runMigrations', () => {
     expect(exists).toBe(true);
   });
 
-  it('is idempotent — running twice does not error', async () => {
+  it('is idempotent — running twice does not error and does not duplicate rows', async () => {
     const db = newDb();
     await runMigrations(db);
+    const first = await db('_standalone_migrations').count<{ c: number }[]>('* as c');
     await expect(runMigrations(db)).resolves.not.toThrow();
+    const second = await db('_standalone_migrations').count<{ c: number }[]>('* as c');
+    expect(Number(second[0]?.c)).toBe(Number(first[0]?.c));
   });
 
   it('records applied migrations in _standalone_migrations', async () => {
