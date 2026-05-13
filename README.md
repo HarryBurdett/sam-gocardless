@@ -98,7 +98,16 @@ Configurable env vars:
 | `DATABASE_PATH` | `./data/gocardless.sqlite` | SQLite file location |
 | `LOGIN_PASSWORD` | _required_ | Shared password for the login form |
 | `SESSION_SECRET` | auto-generated to `./data/.session-secret` | Cookie signing key |
-| `OPERA_ADAPTER` | `noop` | Opera connection adapter (only `noop` is shipped — Opera-backed endpoints return errors) |
+| `OPERA_ADAPTER` | `noop` | Opera connection adapter (only `noop` is shipped) |
+| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Passed verbatim to Express's `app.set('trust proxy', …)` |
+
+### Without an Opera connection
+
+The shipped `noop` Opera adapter makes every `ctx.db.getCompanyDb()` call return `null`. The settings page, mandate registry, payment requests, partner signup flows, and import history all work normally — they only touch the standalone SQLite. **Customer matching, eligible-customer lookups, batch posting to Opera, and any wizard step that needs Opera customer data will surface "No Opera company in context" or similar errors.** That's expected with `OPERA_ADAPTER=noop`; a real adapter is the next building block.
+
+### Behind a reverse proxy
+
+If the standalone server sits behind a TLS-terminating reverse proxy on a public IP (Caddy, Nginx, Cloudflare with a public backend), the default `TRUST_PROXY` value (`loopback, linklocal, uniquelocal`) will not match the proxy's source address, so `req.protocol` stays `http` and session cookies will not carry the `Secure` flag. Set `TRUST_PROXY` to a value that Express recognises (e.g. `1` to trust the first hop, or a CIDR like `10.0.0.0/8`) when deploying behind a non-private proxy. See [the Express docs on `trust proxy`](https://expressjs.com/en/guide/behind-proxies.html).
 
 The standalone host is a sibling of, not a replacement for, the SAM plugin contract. `src/`, `frontend/`, `db/migrations/`, and `manifest.json` are unchanged — SAM continues to consume this repo as a plugin without any adapter shim.
 

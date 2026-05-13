@@ -15,6 +15,7 @@ beforeEach(() => {
   delete process.env.LOGIN_PASSWORD;
   delete process.env.SESSION_SECRET;
   delete process.env.OPERA_ADAPTER;
+  delete process.env.TRUST_PROXY;
   tmpHome = mkdtempSync(join(tmpdir(), 'sgc-config-'));
 });
 
@@ -43,6 +44,7 @@ describe('loadConfig', () => {
     expect(cfg.databasePath).toBe(join(tmpHome, 'gocardless.sqlite'));
     expect(cfg.loginPassword).toBe('secret');
     expect(cfg.operaAdapter).toBe('noop');
+    expect(cfg.trustProxy).toBe('loopback, linklocal, uniquelocal');
     expect(cfg.sessionSecret).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -53,6 +55,13 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ dataDir: tmpHome });
     expect(cfg.port).toBe(4000);
     expect(cfg.operaAdapter).toBe('noop');
+  });
+
+  it('respects TRUST_PROXY override', () => {
+    process.env.LOGIN_PASSWORD = 'secret';
+    process.env.TRUST_PROXY = '1';
+    const cfg = loadConfig({ dataDir: tmpHome });
+    expect(cfg.trustProxy).toBe('1');
   });
 
   it('persists a generated SESSION_SECRET to disk', () => {

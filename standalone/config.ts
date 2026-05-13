@@ -21,6 +21,15 @@ export interface StandaloneConfig {
   sessionSecret: string;
   operaAdapter: string;
   dataDir: string;
+  /**
+   * Value passed verbatim to Express's `app.set('trust proxy', …)`.
+   * Default `'loopback, linklocal, uniquelocal'` covers local-network
+   * reverse proxies. Set to e.g. `'1'` or a public CIDR when the
+   * server sits behind a public-IP TLS terminator, otherwise
+   * `req.protocol` stays `'http'` and the Secure cookie flag is
+   * never applied.
+   */
+  trustProxy: string;
 }
 
 export interface LoadConfigOptions {
@@ -51,6 +60,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
 
   const sessionSecret = resolveSessionSecret(dataDir);
   const operaAdapter = process.env.OPERA_ADAPTER ?? 'noop';
+  const trustProxy =
+    process.env.TRUST_PROXY && process.env.TRUST_PROXY.length > 0
+      ? process.env.TRUST_PROXY
+      : 'loopback, linklocal, uniquelocal';
 
   return {
     port,
@@ -59,6 +72,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): StandaloneConfig {
     sessionSecret,
     operaAdapter,
     dataDir,
+    trustProxy,
   };
 }
 

@@ -87,10 +87,12 @@ export async function buildApp(
     const pluginRouter = await pluginMod.default(ctx);
 
     const app = express();
-    // Trust loopback + private-network proxies so req.protocol honors
-    // X-Forwarded-Proto when running behind a TLS-terminating reverse
-    // proxy. Required for the auth middleware to set Secure on cookies.
-    app.set('trust proxy', 'loopback, linklocal, uniquelocal');
+    // Trust upstream proxies so req.protocol honors X-Forwarded-Proto
+    // when behind TLS termination. Required for the auth middleware
+    // to set Secure on cookies. Operators behind a public-IP proxy
+    // must widen this via TRUST_PROXY (see README) — the loopback
+    // default does not match public IPs.
+    app.set('trust proxy', config.trustProxy);
 
     app.use(express.json({ limit: '10mb' }));
 
