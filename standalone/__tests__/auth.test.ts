@@ -117,4 +117,21 @@ describe('auth', () => {
     expect(res.status).toBe(401);
     await close(server);
   });
+
+  it('requireAuth rejects a future-dated issuedAt', async () => {
+    const { server, url } = await listen(makeApp());
+    const cookie = signSession(
+      {
+        userId: 'local',
+        email: 'local@standalone',
+        issuedAt: Date.now() + 24 * 60 * 60 * 1000, // 1 day in the future
+      },
+      CONFIG.sessionSecret,
+    );
+    const res = await fetch(`${url}/protected`, {
+      headers: { Cookie: `sgc_session=${encodeURIComponent(cookie)}` },
+    });
+    expect(res.status).toBe(401);
+    await close(server);
+  });
 });

@@ -48,7 +48,10 @@ export function verifySession(
       Buffer.from(b64, 'base64url').toString('utf8'),
     ) as SessionPayload;
     if (typeof payload.issuedAt !== 'number') return null;
-    if (Date.now() - payload.issuedAt > MAX_AGE_MS) return null;
+    const now = Date.now();
+    // Reject future-dated sessions (clock skew tolerance: 60s).
+    if (payload.issuedAt > now + 60_000) return null;
+    if (now - payload.issuedAt > MAX_AGE_MS) return null;
     return payload;
   } catch {
     return null;
