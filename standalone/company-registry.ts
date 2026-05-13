@@ -182,6 +182,12 @@ export async function loadCompany(
       code,
       opts.logger,
     );
+    await seedImportsFromLegacyEmailDb(
+      appDb,
+      opts.legacyDataRoot,
+      code,
+      opts.logger,
+    );
 
     samDb = knex({
       client: 'sqlite3',
@@ -368,6 +374,72 @@ function projectRow(
     out.amount = (row.amount_pence as number) / 100;
   }
   return out;
+}
+
+/**
+ * Copy rows from the legacy import-history table into the new schema.
+ *
+ * In the legacy app, `gocardless_imports` lives in
+ * `<LEGACY_DATA_ROOT>/<code>/core/email_data.db` (alongside the email
+ * archive — the two were coupled because imports were initially
+ * email-driven). The SAM port promoted it to the per-app DB. Column
+ * rename map: `gocardless_fees` → `fees_amount`,
+ * `import_date` → `imported_at`. Idempotent: skipped entirely if the
+ * destination already has any rows.
+ */
+async function seedImportsFromLegacyEmailDb(
+  appDb: Knex,
+  legacyDataRoot: string | null,
+  code: string,
+  logger: AppLogger,
+): Promise<void> {
+  if (!legacyDataRoot) return;
+  const legacyFile = resolve(legacyDataRoot, code, 'core', 'email_data.db');
+  if (!existsSync(legacyFile)) return;
+
+  const existing = await appDb('gocardless_imports').count<{ c: number }[]>('* as c');
+  if (Number(existing[0]?.c ?? 0) > 0) return;
+
+  const legacyDb = knex({
+    client: 'sqlite3',
+    connection: { filename: legacyFile },
+    useNullAsDefault: true,
+    pool: { min: 1, max: 1 },
+  });
+  try {
+    if (!(await legacyDb.schema.hasTable('gocardless_imports'))) return;
+    const rows = (await legacyDb('gocardless_imports').select()) as Array<
+      Record<string, unknown>
+    >;
+    if (rows.length === 0) return;
+    const mapped = rows.map((row) => ({
+      email_id: row.email_id ?? null,
+      payout_id: row.payout_id ?? null,
+      source: row.source ?? 'email',
+      bank_reference: row.bank_reference ?? null,
+      gross_amount: row.gross_amount ?? null,
+      net_amount: row.net_amount ?? null,
+      fees_amount: row.gocardless_fees ?? null,
+      vat_on_fees: row.vat_on_fees ?? null,
+      payment_count: row.payment_count ?? null,
+      payments_json: row.payments_json ?? null,
+      target_system: row.target_system ?? 'opera_se',
+      batch_ref: row.batch_ref ?? null,
+      imported_at: row.import_date ?? null,
+      imported_by: row.imported_by ?? null,
+      fx_amount: row.fx_amount ?? null,
+      post_date: row.post_date ?? null,
+      payment_date: row.post_date ?? row.import_date ?? null,
+    }));
+    await appDb('gocardless_imports').insert(mapped);
+    logger.info(`[${code}] migrated ${rows.length} rows from gocardless_imports (legacy email_data.db)`);
+  } catch (err) {
+    logger.warn(
+      `[${code}] failed to migrate gocardless_imports from email_data.db: ${(err as Error).message}`,
+    );
+  } finally {
+    await legacyDb.destroy();
+  }
 }
 
 async function seedFromLegacyIfEmpty(

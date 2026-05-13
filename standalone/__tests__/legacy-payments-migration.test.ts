@@ -201,6 +201,83 @@ describe('legacy payments-db migration', () => {
     }
   });
 
+  it('migrates gocardless_imports from the legacy core/email_data.db', async () => {
+    // Set up the second legacy DB the seed expects.
+    const coreDir = join(legacyDataRoot, CODE, 'core');
+    mkdirSync(coreDir, { recursive: true });
+    const emailDbPath = join(coreDir, 'email_data.db');
+    const emailDb = knex({
+      client: 'sqlite3',
+      connection: { filename: emailDbPath },
+      useNullAsDefault: true,
+      pool: { min: 1, max: 1 },
+    });
+    try {
+      await emailDb.schema.createTable('gocardless_imports', (t) => {
+        t.increments('id');
+        t.integer('email_id');
+        t.text('payout_id');
+        t.text('source').defaultTo('email');
+        t.text('bank_reference');
+        t.float('gross_amount');
+        t.float('net_amount');
+        t.float('gocardless_fees');
+        t.float('vat_on_fees');
+        t.integer('payment_count');
+        t.text('payments_json');
+        t.text('target_system').notNullable();
+        t.text('batch_ref');
+        t.text('import_date').notNullable();
+        t.text('imported_by');
+        t.float('fx_amount');
+        t.text('customer_name');
+        t.text('post_date');
+      });
+      await emailDb('gocardless_imports').insert({
+        payout_id: 'PO_TEST_1',
+        source: 'api',
+        bank_reference: 'BANKREF_1',
+        gross_amount: 1234.56,
+        net_amount: 1230.56,
+        gocardless_fees: 4.0,
+        vat_on_fees: 0.0,
+        payment_count: 3,
+        payments_json: '[]',
+        target_system: 'opera_se',
+        batch_ref: null,
+        import_date: '2026-05-01T10:00:00',
+        imported_by: 'TEST',
+        post_date: '2026-05-01',
+      });
+    } finally {
+      await emailDb.destroy();
+    }
+
+    const instance = await loadCompany(CODE, {
+      dataRoot,
+      legacyDataRoot,
+      operaAdapter: noOpAdapter,
+      logger: silentLogger,
+      factory,
+    });
+    try {
+      const imports = await instance.appDb('gocardless_imports').select();
+      expect(imports).toHaveLength(1);
+      const r = imports[0];
+      expect(r.payout_id).toBe('PO_TEST_1');
+      // Renamed columns:
+      expect(r.fees_amount).toBeCloseTo(4.0, 2);
+      expect(r.imported_at).toBe('2026-05-01T10:00:00');
+      // Dropped: customer_name not in new schema (no equivalent column)
+      expect(r.customer_name).toBeUndefined();
+      // Derived: payment_date falls back to post_date when not set
+      expect(r.payment_date).toBe('2026-05-01');
+    } finally {
+      await instance.samDb.destroy();
+      await instance.appDb.destroy();
+    }
+  });
+
   it('is idempotent on a second load (no duplicate rows)', async () => {
     const first = await loadCompany(CODE, {
       dataRoot,
