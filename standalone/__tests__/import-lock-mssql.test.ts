@@ -35,42 +35,50 @@ beforeEach(() => {
 
 describe('buildOperaAwareImportLock — in-memory fallback', () => {
   it('acquires successfully when no Opera DB is configured', async () => {
-    const lock = buildOperaAwareImportLock(() => null, silentLogger);
+    const lock = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     expect(await lock.acquire('gocardless:BC010', 'tester')).toBe(true);
   });
 
   it('refuses a second acquire for the same key before release', async () => {
-    const lock = buildOperaAwareImportLock(() => null, silentLogger);
+    const lock = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     expect(await lock.acquire('gocardless:BC010', 'tester')).toBe(true);
     expect(await lock.acquire('gocardless:BC010', 'tester')).toBe(false);
   });
 
   it('releases the lock and a fresh acquire succeeds', async () => {
-    const lock = buildOperaAwareImportLock(() => null, silentLogger);
+    const lock = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     await lock.acquire('gocardless:BC010', 'tester');
     await lock.release('gocardless:BC010');
     expect(await lock.acquire('gocardless:BC010', 'tester')).toBe(true);
   });
 
   it('release without a matching acquire is a no-op', async () => {
-    const lock = buildOperaAwareImportLock(() => null, silentLogger);
+    const lock = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     await expect(lock.release('never-acquired')).resolves.toBeUndefined();
   });
 
-  it('two separate adapter instances still serialise on the same key via the shared in-memory map', async () => {
-    // Bank-code collision across companies is rare but real (e.g.
-    // intsys and z_demo both use BC010). The legacy semantics
-    // intentionally serialise on bank code; preserve that.
-    const a = buildOperaAwareImportLock(() => null, silentLogger);
-    const b = buildOperaAwareImportLock(() => null, silentLogger);
+  it('two adapter instances for the SAME company serialise on the same key', async () => {
+    const a = buildOperaAwareImportLock('intsys', () => null, silentLogger);
+    const b = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     expect(await a.acquire('gocardless:BC010', 'a')).toBe(true);
     expect(await b.acquire('gocardless:BC010', 'b')).toBe(false);
     await a.release('gocardless:BC010');
     expect(await b.acquire('gocardless:BC010', 'b')).toBe(true);
   });
 
+  it('two adapter instances for DIFFERENT companies do not collide on the same bank code', async () => {
+    // intsys and z_demo both use BC010 in legacy data. With the
+    // company-namespace prefix they should now be independent.
+    const intsys = buildOperaAwareImportLock('intsys', () => null, silentLogger);
+    const zDemo = buildOperaAwareImportLock('z_demo', () => null, silentLogger);
+    expect(await intsys.acquire('gocardless:BC010', 'a')).toBe(true);
+    expect(await zDemo.acquire('gocardless:BC010', 'b')).toBe(true);
+    await intsys.release('gocardless:BC010');
+    await zDemo.release('gocardless:BC010');
+  });
+
   it('different keys do not collide', async () => {
-    const lock = buildOperaAwareImportLock(() => null, silentLogger);
+    const lock = buildOperaAwareImportLock('intsys', () => null, silentLogger);
     expect(await lock.acquire('gocardless:BC010', 'a')).toBe(true);
     expect(await lock.acquire('gocardless:BC020', 'b')).toBe(true);
   });

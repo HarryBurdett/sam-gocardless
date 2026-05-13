@@ -228,6 +228,51 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     });
   });
 
+  // Live customer search against Opera's sname table for the
+  // session-selected company. The Requests page's "match customer"
+  // dropdown calls this. Lives at the host layer (not the plugin
+  // router) so the SAM contract stays zero-diff.
+  app.get('/auth/customers-search', async (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session', customers: [] });
+      return;
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q : (typeof req.query.search === 'string' ? req.query.search : '');
+    const limitRaw = Number.parseInt(String(req.query.limit ?? '20'), 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 20;
+
+    const operaDb = operaAdapter.getCompanyDb(code);
+    if (!operaDb) {
+      res.json({ customers: [], note: 'Opera connection not available for this company.' });
+      return;
+    }
+    try {
+      const pattern = `%${(q ?? '').trim().toUpperCase()}%`;
+      // Opera's sn_name column commonly uses a case-sensitive
+      // collation, so we upper-case both sides to make the search
+      // robust to whatever the operator types.
+      const rows = (await operaDb.raw(
+        `SELECT TOP (?)
+            RTRIM(sn_account) AS account,
+            RTRIM(sn_name)    AS name
+         FROM sname WITH (NOLOCK)
+         WHERE UPPER(sn_account) LIKE ? OR UPPER(sn_name) LIKE ?
+         ORDER BY sn_name`,
+        [limit, pattern, pattern],
+      )) as Array<{ account: string; name: string }> | { recordset?: Array<{ account: string; name: string }> };
+      const list = Array.isArray(rows)
+        ? rows
+        : Array.isArray(rows.recordset)
+          ? rows.recordset
+          : [];
+      res.json({ customers: list });
+    } catch (err) {
+      consoleLogger.warn(`[${code}] customer-search failed: ${(err as Error).message}`);
+      res.status(500).json({ error: (err as Error).message, customers: [] });
+    }
+  });
+
   // Update the per-company opera.json (database + operaVersion).
   // The Opera SQL connection details (host/user/password/etc.) are
   // bootstrap-time env vars and are not editable here — they're

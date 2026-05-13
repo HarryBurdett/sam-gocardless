@@ -48,6 +48,14 @@ interface HeldLock {
  * Build an ImportLockAdapter that uses `sp_getapplock` against the
  * Opera SQL Server when available, with an in-memory fallback.
  *
+ * The plugin's lock key (e.g. `gocardless:BC010`) is namespaced
+ * internally with the company code before reaching the underlying
+ * lock primitive — so two standalone companies that happen to use
+ * the same bank code don't false-share a lock. (In SAM, each tenant
+ * runs in its own worker, so this collision can't happen; the
+ * namespace prefix is a standalone-only safeguard.)
+ *
+ * @param companyCode Identifier prefixed to every lock key.
  * @param getOperaDb  Returns the per-company Opera Knex pool, or
  *                    null if the company has no SQL connection
  *                    (noop or operaVersion=3). Re-evaluated on every
@@ -56,14 +64,17 @@ interface HeldLock {
  * @param logger      Standalone host logger.
  */
 export function buildOperaAwareImportLock(
+  companyCode: string,
   getOperaDb: () => Knex | null,
   logger: AppLogger,
 ): ImportLockAdapter {
+  const namespaced = (key: string) => `${companyCode}::${key}`;
   /** Per-adapter-instance map of currently-held locks. */
   const held = new Map<string, HeldLock>();
 
   return {
     async acquire(key: string, locker: string): Promise<boolean> {
+      const resource = namespaced(key);
       if (held.has(key)) return false;
 
       const operaDb = getOperaDb();
@@ -74,7 +85,7 @@ export function buildOperaAwareImportLock(
             `DECLARE @r INT;
              EXEC @r = sp_getapplock @Resource = ?, @LockMode = ?, @LockOwner = ?, @LockTimeout = 0;
              SELECT @r AS r`,
-            [key, 'Exclusive', 'Transaction'],
+            [resource, 'Exclusive', 'Transaction'],
           );
           const rv = parseApplockResult(result);
           if (rv < 0) {
@@ -82,23 +93,24 @@ export function buildOperaAwareImportLock(
             return false;
           }
           held.set(key, { kind: 'mssql', trx });
-          logger.debug(`[applock] acquired mssql lock "${key}" for ${locker}`);
+          logger.debug(`[applock] acquired mssql lock "${resource}" for ${locker}`);
           return true;
         } catch (err) {
           await trx.rollback().catch(() => {});
           logger.warn(
-            `[applock] mssql acquire failed for "${key}": ${(err as Error).message}; falling back to in-memory`,
+            `[applock] mssql acquire failed for "${resource}": ${(err as Error).message}; falling back to in-memory`,
           );
           // fall through to in-memory below
         }
       }
 
-      // In-memory fallback path.
-      const existing = fallbackLocks.get(key);
+      // In-memory fallback path — also namespaced so two standalone
+      // companies don't false-share a key in the process-shared Map.
+      const existing = fallbackLocks.get(resource);
       if (existing && Date.now() - existing.acquiredAt < FALLBACK_STALE_LOCK_MS) {
         return false;
       }
-      fallbackLocks.set(key, { acquiredAt: Date.now(), locker });
+      fallbackLocks.set(resource, { acquiredAt: Date.now(), locker });
       held.set(key, { kind: 'memory' });
       return true;
     },
@@ -107,18 +119,19 @@ export function buildOperaAwareImportLock(
       const entry = held.get(key);
       if (!entry) return;
       held.delete(key);
+      const resource = namespaced(key);
       if (entry.kind === 'mssql' && entry.trx) {
         try {
           // Committing releases Transaction-scoped applocks.
           await entry.trx.commit();
         } catch (err) {
           logger.warn(
-            `[applock] release commit failed for "${key}": ${(err as Error).message}`,
+            `[applock] release commit failed for "${resource}": ${(err as Error).message}`,
           );
           await entry.trx.rollback().catch(() => {});
         }
       } else {
-        fallbackLocks.delete(key);
+        fallbackLocks.delete(resource);
       }
     },
   };

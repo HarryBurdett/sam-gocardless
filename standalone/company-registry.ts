@@ -210,6 +210,7 @@ export async function loadCompany(
     // hook the plugin reads is `ctx.gocardlessImportLock`.
     (ctx as Record<string, unknown>).gocardlessImportLock =
       buildOperaAwareImportLock(
+        code,
         () => opts.operaAdapter.getCompanyDb(code),
         opts.logger,
       );

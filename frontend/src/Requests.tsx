@@ -33,10 +33,18 @@ function Card({
 
 // Searchable customer dropdown component — uses React Query (same pattern as SalesOrders)
 async function fetchCustomerSearch(search: string): Promise<Array<{account: string; name: string; postcode?: string}>> {
-  const res = await authFetch(`/api/sop/customers?search=${encodeURIComponent(search)}&limit=20`);
-  if (!res.ok) throw new Error('Failed to fetch customers');
-  const data = await res.json();
-  return data.customers || [];
+  // Standalone host exposes /auth/customers-search at the host layer
+  // (not under /api/apps/gocardless), so we hit it with a plain fetch
+  // rather than the gocardless-prefixed authFetch. The standalone
+  // session cookie is sent automatically (same-origin). In SAM-plugged
+  // mode this endpoint doesn't exist and the dropdown returns an empty
+  // list — to be wired into SAM's own customer-search service later.
+  const res = await fetch(
+    `/auth/customers-search?q=${encodeURIComponent(search)}&limit=20`,
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { customers?: Array<{ account: string; name: string; postcode?: string }> };
+  return data.customers ?? [];
 }
 
 function CustomerAccountSearch({
