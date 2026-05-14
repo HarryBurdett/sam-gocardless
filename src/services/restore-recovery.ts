@@ -166,12 +166,17 @@ async function detectOrphans(
     const cleanBatch = batch.filter((s) => /^[A-Za-z0-9]+$/.test(s));
     if (cleanBatch.length === 0) continue;
     try {
+      // Bind suffix as a query parameter rather than string-
+      // interpolating into LIKE — audit HIGH. The sanitiser above
+      // (/^[A-Za-z0-9]+$/) defends against today's call sites, but
+      // any future relaxation of the regex would silently re-open
+      // injection. The matching sister fix landed in bank-rec.
       const rows = (await operaDb('aentry')
         .distinct(operaDb.raw('RTRIM(ae_entref) AS entref'))
         .where('ae_value', '>', 0)
         .andWhere(function refMatch(this: Knex.QueryBuilder) {
           for (const s of cleanBatch) {
-            this.orWhereRaw(`RTRIM(ae_entref) LIKE '%${s}%'`);
+            this.orWhereRaw('RTRIM(ae_entref) LIKE ?', [`%${s}%`]);
           }
         })) as unknown as Array<{ entref: string | null }>;
       for (const r of rows ?? []) {

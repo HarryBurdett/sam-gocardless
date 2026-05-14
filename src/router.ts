@@ -412,6 +412,12 @@ export function createRouter(ctx: AppContext): Router {
     const operaDb = getOperaDb(req, res);
     if (!operaDb) return;
     try {
+      // PRODUCTION-VALIDATED COLUMNS: `pn_payee` and `pn_dormant` are
+      // NOT documented in opera-knowledge-ref/schema/purchase.md (the
+      // audit flagged this as BLOCKER #8), but a live Opera SE query
+      // against Opera3SECompany00I.dbo.pname on 2026-05-14 returned
+      // both columns from INFORMATION_SCHEMA.COLUMNS. The schema doc
+      // is incomplete, not the SQL. Leaving the SELECT as-is.
       const rows = (await operaDb.raw(`
         SELECT
           RTRIM(pn_account) AS code,
@@ -3559,6 +3565,16 @@ export function createRouter(ctx: AppContext): Router {
             destBankSortCode: (req.query.dest_bank_sort_code ??
               body.dest_bank_sort_code ??
               null) as string | null,
+            // Operator code for Opera audit trail (atran.at_inputby,
+            // aentry.sq_cruser, ntran.nt_inp). Accept either the
+            // explicit `input_by` field or a logged-in-user hint
+            // header — defaults to 'GOCARDLS' downstream when blank.
+            // Audit HIGH.
+            inputBy:
+              (req.query.input_by ??
+                body.input_by ??
+                req.headers['x-sam-user'] ??
+                null) as string | null,
             payments,
           },
           {
@@ -3661,6 +3677,12 @@ export function createRouter(ctx: AppContext): Router {
             destBankSortCode: (req.query.dest_bank_sort_code ??
               body.dest_bank_sort_code ??
               null) as string | null,
+            // Operator code for Opera audit trail. Audit HIGH.
+            inputBy:
+              (req.query.input_by ??
+                body.input_by ??
+                req.headers['x-sam-user'] ??
+                null) as string | null,
             archiveFolder:
               (req.query.archive_folder as string) ??
               (body.archive_folder as string) ??

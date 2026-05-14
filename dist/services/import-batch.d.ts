@@ -58,6 +58,13 @@ export interface ImportRequest {
     payments: IncomingPayment[];
     /** Optional email id (set when importing from a scanned email). */
     emailId?: number | null;
+    /**
+     * Operator code threaded into Opera audit-trail fields
+     * (atran.at_inputby, aentry.sq_cruser, ntran.nt_inp). Defaults to
+     * 'GOCARDLS' to match legacy. Faithful port of
+     * opera_sql_import.py:6029 — routes pass logged-in user initials.
+     */
+    inputBy?: string | null;
 }
 export interface ImportSettings {
     gocardless_bank_code?: string | null;
@@ -89,6 +96,8 @@ export interface ValidatedRequest {
     destinationBank: string | null;
     transferCbtype: string | null;
     emailId: number | null;
+    /** Validated operator code (defaults 'GOCARDLS'). */
+    inputBy: string;
     warnings: string[];
 }
 export interface ValidationFailure {

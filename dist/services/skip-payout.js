@@ -32,17 +32,31 @@ export async function skipPayout(appDb, input) {
         }
         const inserted = await appDb('gocardless_imports')
             .insert({
+            // Audit HIGH: previously dropped on insert. Without payout_id
+            // the next `isPayoutImported(payoutId)` lookup returned false
+            // so skipped FX/duplicate payouts re-appeared on every API
+            // poll. Re-include here (migration 005 added all three cols).
+            payout_id: input.payoutId,
             bank_reference: displayReference,
             payment_date: null, // skipped — no payout_date stored
             gross_amount: input.grossAmount,
             fees_amount: 0,
             vat_on_fees: 0,
             net_amount: input.grossAmount, // unknown for skipped — use gross
+            // fx_amount: original payout amount in source currency (for
+            // foreign-currency skips). Audit HIGH.
+            fx_amount: input.fxAmount ?? null,
+            // payment_count: number of underlying payments in the payout.
+            // Audit HIGH.
+            payment_count: input.paymentCount ?? 0,
             currency: currency,
             bank_code: null,
             cbtype: null,
             payments_json: paymentsJson,
             opera_entry_refs: null,
+            // Source: skipped payouts always come via the API view (the
+            // email importer doesn't surface skip). Audit MEDIUM.
+            source: 'api',
             target_system: targetSystem,
             imported_by: importedBy,
         })

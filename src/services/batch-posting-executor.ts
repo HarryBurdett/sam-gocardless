@@ -53,6 +53,7 @@ import {
   insertNjmemo,
   updateNacntBalance,
   updateNbankBalance,
+  executeWithDeadlockRetry,
   type NacntType,
 } from '../_shared/index.js';
 import type {
@@ -60,6 +61,10 @@ import type {
   ValidatedPayment,
   ValidatedRequest,
 } from './import-batch.js';
+import {
+  getPeriodPostingDecision,
+  type PeriodPostingDecision,
+} from './period-posting-decision.js';
 import { autoAllocateReceipt } from './allocate-receipt.js';
 import {
   assertAentryHeader,
@@ -69,6 +74,44 @@ import {
   verifyAentryCommitted,
   PostingVerificationError,
 } from '../_shared/post-write-verify.js';
+
+// ---------------------------------------------------------------------
+// Bank info loader — for bank transfers we embed the DESTINATION bank's
+// sort code + account number on the SOURCE atran (and vice-versa) so
+// each cashbook line shows where the money went. Faithful port of
+// opera_sql_import.py:9417 (`{dest_sort[:8]}, {dest_number[:9]}`).
+// ---------------------------------------------------------------------
+interface BankInfo {
+  code: string;
+  description: string;
+  sortCode: string;
+  accountNumber: string;
+}
+
+async function loadBankInfo(trx: Knex, bankCode: string): Promise<BankInfo> {
+  const rows = (await trx.raw(
+    `SELECT TOP 1 RTRIM(nk_desc) AS description,
+            RTRIM(ISNULL(nk_sort, '')) AS sort_code,
+            RTRIM(ISNULL(nk_number, '')) AS account_number
+     FROM nbank WITH (NOLOCK)
+     WHERE RTRIM(nk_acnt) = ?`,
+    [bankCode],
+  )) as unknown as Array<{
+    description: string | null;
+    sort_code: string | null;
+    account_number: string | null;
+  }>;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error(`Bank account '${bankCode}' not found in nbank`);
+  }
+  const r = rows[0]!;
+  return {
+    code: bankCode,
+    description: (r.description ?? '').trim(),
+    sortCode: (r.sort_code ?? '').trim(),
+    accountNumber: (r.account_number ?? '').trim(),
+  };
+}
 
 interface CustomerInfo {
   account: string;
@@ -602,6 +645,13 @@ interface PostFeesArgs {
   period: number;
   now: NowParts;
   feesVatCode: string;
+  inputBy: string;
+  /**
+   * Period-posting decision — gates ntran/nacnt (postToNominal) and
+   * anoml (postToTransferFile + transferFileDoneFlag). Faithful port
+   * of opera_sql_import.py:6540, 6769, 6771.
+   */
+  decision: PeriodPostingDecision;
 }
 
 async function resolveFeesPaymentType(
@@ -626,7 +676,8 @@ interface FeesPostResult {
   atranSumPence: number; // = -grossFeesPence (lines sum to header)
   feesUnique: string;
   feesVatUnique: string | null;
-  ntranCount: number; // 2 or 3
+  ntranCount: number; // 0 (RTU off) or 2 or 3
+  anomlCount: number; // 0, 2, or 3
 }
 
 async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostResult> {
@@ -656,65 +707,32 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
   const feesAentryId = await getNextId(trx, 'aentry');
   const feesUnique = generateOperaUniqueId();
   const feesVatUnique = generateOperaUniqueId();
+  // Allocate the journal only when we will use it. When neither NL
+  // ntran nor transfer-file anoml will be written (decision says
+  // skip both), we'd waste a journal number — but legacy also
+  // pre-allocates, so we keep it for fidelity. Used by both ntran
+  // (decision.postToNominal) and anoml (decision.postToTransferFile).
   const journal = await getNextJournal(trx, 1);
 
-  // 1. NL postings: DR fees expense + DR VAT input + CR bank
-  const feesAcctType =
-    (await getNacntType(trx, args.feesNominalAccount)) ??
-    ({ na_type: 'P ', na_subt: 'HA' } as NacntType);
-  const feesBankType =
-    (await getNacntType(trx, args.bankAccount)) ??
-    ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
+  // 1. NL postings: DR fees expense + DR VAT input + CR bank.
+  // GATED on decision.postToNominal — when RTU is off (back-period
+  // import), only anoml is written and the nightly NL-transfer job
+  // will pick the entries up. Faithful port of
+  // opera_sql_import.py:6540.
+  const hasVatLine = vatAmount > 0 && !!vatNominalAccount;
+  let ntranCount = 0;
+  if (args.decision.postToNominal) {
+    const feesAcctType =
+      (await getNacntType(trx, args.feesNominalAccount)) ??
+      ({ na_type: 'P ', na_subt: 'HA' } as NacntType);
+    const feesBankType =
+      (await getNacntType(trx, args.bankAccount)) ??
+      ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
 
-  const ntranCount = vatAmount > 0 && vatNominalAccount ? 3 : 2;
-  const feesNtranIdStart = await getNextId(trx, 'ntran', ntranCount);
+    ntranCount = hasVatLine ? 3 : 2;
+    const feesNtranIdStart = await getNextId(trx, 'ntran', ntranCount);
 
-  // DR Fees expense (NET)
-  await trx.raw(
-    `INSERT INTO ntran (
-      id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
-      nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
-      nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
-      nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
-      nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
-      nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
-      nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
-      nt_distrib, datecreated, datemodified, state
-    ) VALUES (
-      ?, ?, '    ', ?, ?, ?,
-      '', 'GOCARDLS', 'A', 'GoCardless fees', 'GoCardless fees',
-      ?, ?, ?, ?, 0,
-      0, 0, '   ', 0, 0,
-      0, 0, 'I', '', '        ',
-      '        ', 'N', 0, ?, 0,
-      0, 0, 0, 0, 0,
-      0, ?, ?, 1
-    )`,
-    [
-      feesNtranIdStart,
-      args.feesNominalAccount,
-      feesAcctType.na_type,
-      feesAcctType.na_subt,
-      journal,
-      args.postDate,
-      netFees,
-      args.year,
-      args.period,
-      feesUnique,
-      args.now.iso,
-      args.now.iso,
-    ],
-  );
-  await updateNacntBalance(trx, args.feesNominalAccount, netFees, {
-    period: args.period,
-    year: args.year,
-  });
-
-  // DR VAT (only if VAT > 0 + nominal account resolved)
-  if (vatAmount > 0 && vatNominalAccount) {
-    const vatAcctType =
-      (await getNacntType(trx, vatNominalAccount)) ??
-      ({ na_type: 'B ', na_subt: 'BB' } as NacntType);
+    // DR Fees expense (NET) — opera_sql_import.py:6549-6571
     await trx.raw(
       `INSERT INTO ntran (
         id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
@@ -727,7 +745,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         nt_distrib, datecreated, datemodified, state
       ) VALUES (
         ?, ?, '    ', ?, ?, ?,
-        '', 'GOCARDLS', 'A', 'GoCardless fees VAT', 'GoCardless fees',
+        '', ?, 'A', 'GoCardless fees', 'GoCardless fees',
         ?, ?, ?, ?, 0,
         0, 0, '   ', 0, 0,
         0, 0, 'I', '', '        ',
@@ -736,67 +754,116 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         0, ?, ?, 1
       )`,
       [
-        feesNtranIdStart + 1,
-        vatNominalAccount,
-        vatAcctType.na_type,
-        vatAcctType.na_subt,
+        feesNtranIdStart,
+        args.feesNominalAccount,
+        feesAcctType.na_type,
+        feesAcctType.na_subt,
         journal,
+        args.inputBy.slice(0, 10),
         args.postDate,
-        vatAmount,
+        netFees,
         args.year,
         args.period,
-        feesVatUnique,
+        feesUnique,
         args.now.iso,
         args.now.iso,
       ],
     );
-    await updateNacntBalance(trx, vatNominalAccount, vatAmount, {
+    await updateNacntBalance(trx, args.feesNominalAccount, netFees, {
       period: args.period,
       year: args.year,
     });
-  }
 
-  // CR Bank (gross fees)
-  await trx.raw(
-    `INSERT INTO ntran (
-      id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
-      nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
-      nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
-      nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
-      nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
-      nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
-      nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
-      nt_distrib, datecreated, datemodified, state
-    ) VALUES (
-      ?, ?, '    ', ?, ?, ?,
-      '', 'GOCARDLS', 'A', 'GoCardless fees', 'GoCardless fees',
-      ?, ?, ?, ?, 0,
-      0, 0, '   ', 0, 0,
-      0, 0, 'I', '', '        ',
-      '        ', 'N', 0, ?, 0,
-      0, 0, 0, 0, 0,
-      0, ?, ?, 1
-    )`,
-    [
-      feesNtranIdStart + (vatAmount > 0 && vatNominalAccount ? 2 : 1),
-      args.bankAccount,
-      feesBankType.na_type,
-      feesBankType.na_subt,
-      journal,
-      args.postDate,
-      -grossFees,
-      args.year,
-      args.period,
-      feesUnique,
-      args.now.iso,
-      args.now.iso,
-    ],
-  );
-  await updateNacntBalance(trx, args.bankAccount, -grossFees, {
-    period: args.period,
-    year: args.year,
-  });
-  await insertNjmemo(trx, journal, 'Cashbook Ledger Transfer (RT)');
+    // DR VAT (only if VAT > 0 + nominal account resolved) — :6576-6620
+    if (hasVatLine) {
+      const vatAcctType =
+        (await getNacntType(trx, vatNominalAccount)) ??
+        ({ na_type: 'B ', na_subt: 'BB' } as NacntType);
+      await trx.raw(
+        `INSERT INTO ntran (
+          id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
+          nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
+          nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
+          nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
+          nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
+          nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
+          nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
+          nt_distrib, datecreated, datemodified, state
+        ) VALUES (
+          ?, ?, '    ', ?, ?, ?,
+          '', ?, 'A', 'GoCardless fees VAT', 'GoCardless fees',
+          ?, ?, ?, ?, 0,
+          0, 0, '   ', 0, 0,
+          0, 0, 'I', '', '        ',
+          '        ', 'N', 0, ?, 0,
+          0, 0, 0, 0, 0,
+          0, ?, ?, 1
+        )`,
+        [
+          feesNtranIdStart + 1,
+          vatNominalAccount,
+          vatAcctType.na_type,
+          vatAcctType.na_subt,
+          journal,
+          args.inputBy.slice(0, 10),
+          args.postDate,
+          vatAmount,
+          args.year,
+          args.period,
+          feesVatUnique,
+          args.now.iso,
+          args.now.iso,
+        ],
+      );
+      await updateNacntBalance(trx, vatNominalAccount, vatAmount, {
+        period: args.period,
+        year: args.year,
+      });
+    }
+
+    // CR Bank (gross fees) — :6622-6664
+    await trx.raw(
+      `INSERT INTO ntran (
+        id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
+        nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
+        nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
+        nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
+        nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
+        nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
+        nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
+        nt_distrib, datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', ?, ?, ?,
+        '', ?, 'A', 'GoCardless fees', 'GoCardless fees',
+        ?, ?, ?, ?, 0,
+        0, 0, '   ', 0, 0,
+        0, 0, 'I', '', '        ',
+        '        ', 'N', 0, ?, 0,
+        0, 0, 0, 0, 0,
+        0, ?, ?, 1
+      )`,
+      [
+        feesNtranIdStart + (hasVatLine ? 2 : 1),
+        args.bankAccount,
+        feesBankType.na_type,
+        feesBankType.na_subt,
+        journal,
+        args.inputBy.slice(0, 10),
+        args.postDate,
+        -grossFees,
+        args.year,
+        args.period,
+        feesUnique,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+    await updateNacntBalance(trx, args.bankAccount, -grossFees, {
+      period: args.period,
+      year: args.year,
+    });
+    await insertNjmemo(trx, journal, 'Cashbook Ledger Transfer (RT)');
+  }
 
   // 2. Cashbook entry for fees (separate from receipts batch)
   await trx.raw(
@@ -810,7 +877,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
       ?, ?, '    ', ?, ?, 0,
       ?, 0, 0, 0, ?,
       ?, 0, 0, 0, 1,
-      0, ?, ?, 'GOCARDLS', 'GoCardless fees',
+      0, ?, ?, ?, 'GoCardless fees',
       0, 0, '  ', ?, ?, 1
     )`,
     [
@@ -823,13 +890,16 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
       -grossFeesPence,
       args.now.date,
       args.now.time.slice(0, 8),
+      // sq_cruser: thread the operator code (audit HIGH) —
+      // opera_sql_import.py:6666.
+      args.inputBy.slice(0, 8),
       args.now.iso,
       args.now.iso,
     ],
   );
 
   // 3. atran lines (split into net + VAT when VAT > 0)
-  if (vatAmount > 0 && vatNominalAccount) {
+  if (hasVatLine) {
     const atranIdStart = await getNextId(trx, 'atran', 2);
     // Net line
     await trx.raw(
@@ -845,7 +915,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         at_bsref, at_bsname, at_vattycd, at_project, at_job,
         at_bic, at_iban, at_memo, datecreated, datemodified, state
       ) VALUES (
-        ?, ?, '    ', ?, ?, 'GOCARDLS',
+        ?, ?, '    ', ?, ?, ?,
         1, ?, ?, 1, ?,
         0, '   ', 1.0, 0, 2,
         ?, 'GoCardless fees', '', '        ', '',
@@ -861,6 +931,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         args.bankAccount,
         feesCbtype,
         feesEntryNumber,
+        args.inputBy.slice(0, 8),
         args.postDate,
         args.postDate,
         -netFeesPence,
@@ -885,7 +956,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         at_bsref, at_bsname, at_vattycd, at_project, at_job,
         at_bic, at_iban, at_memo, datecreated, datemodified, state
       ) VALUES (
-        ?, ?, '    ', ?, ?, 'GOCARDLS',
+        ?, ?, '    ', ?, ?, ?,
         1, ?, ?, 1, ?,
         0, '   ', 1.0, 0, 2,
         ?, 'GoCardless fees VAT', '', '        ', '',
@@ -901,6 +972,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         args.bankAccount,
         feesCbtype,
         feesEntryNumber,
+        args.inputBy.slice(0, 8),
         args.postDate,
         args.postDate,
         -vatPence,
@@ -928,7 +1000,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         at_bsref, at_bsname, at_vattycd, at_project, at_job,
         at_bic, at_iban, at_memo, datecreated, datemodified, state
       ) VALUES (
-        ?, ?, '    ', ?, ?, 'GOCARDLS',
+        ?, ?, '    ', ?, ?, ?,
         1, ?, ?, 1, ?,
         0, '   ', 1.0, 0, 2,
         ?, 'GoCardless fees', '', '        ', '',
@@ -944,6 +1016,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         args.bankAccount,
         feesCbtype,
         feesEntryNumber,
+        args.inputBy.slice(0, 8),
         args.postDate,
         args.postDate,
         -grossFeesPence,
@@ -959,7 +1032,123 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
   // 4. nbank balance (deduct gross fees)
   await updateNbankBalance(trx, args.bankAccount, -grossFees);
 
-  const hasVatLine = vatAmount > 0 && !!vatNominalAccount;
+  // 5. anoml (transfer file) — BLOCKER #3 fix.
+  // Faithful port of opera_sql_import.py:6768-6825. 2 legs (no VAT)
+  // or 3 (with VAT). ax_source='A' for nominal entries; FC fields
+  // populated (ax_fcrate=1.0, ax_fcdec=2.0, ax_fvalue=value*100).
+  // Bank leg (CR, -gross) + fees expense leg (DR, +net) share
+  // `feesUnique` for ax_unique; optional VAT leg uses `feesVatUnique`.
+  // ax_done from decision.transferFileDoneFlag; ax_jrnl = journal
+  // ONLY when NL post happened, else 0 (legacy line 6770).
+  // Verified against snapshot
+  // `gocardless_batch_import_20260407_104558.json` (anoml rows
+  // 8750/8751/8752: ax_source='A', ax_fcrate=1.0).
+  let anomlCount = 0;
+  if (args.decision.postToTransferFile) {
+    const anomlIdStart = await getNextId(trx, 'anoml', hasVatLine ? 3 : 2);
+    const doneFlag = args.decision.transferFileDoneFlag;
+    const jrnlNum = args.decision.postToNominal ? journal : 0;
+    const feesComment = 'GoCardless fees';
+    const feesBankFvalue = -grossFeesPence;
+    const feesExpenseFvalue = Math.round(netFees * 100);
+
+    // anoml bank leg (CR)
+    await trx.raw(
+      `INSERT INTO anoml (
+        id, ax_nacnt, ax_ncntr, ax_source, ax_date, ax_value, ax_tref,
+        ax_comment, ax_done, ax_fcurr, ax_fvalue, ax_fcrate, ax_fcmult, ax_fcdec,
+        ax_srcco, ax_unique, ax_project, ax_job, ax_jrnl, ax_nlpdate,
+        datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', 'A', ?, ?, ?,
+        ?, ?, '   ', ?, 1.0, 0, 2.0,
+        'I', ?, '        ', '        ', ?, ?,
+        ?, ?, 1
+      )`,
+      [
+        anomlIdStart,
+        args.bankAccount,
+        args.postDate,
+        -grossFees,
+        args.reference.slice(0, 20),
+        feesComment.slice(0, 40),
+        doneFlag,
+        feesBankFvalue,
+        feesUnique,
+        jrnlNum,
+        args.postDate,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+
+    // anoml fees expense leg (DR, +net)
+    await trx.raw(
+      `INSERT INTO anoml (
+        id, ax_nacnt, ax_ncntr, ax_source, ax_date, ax_value, ax_tref,
+        ax_comment, ax_done, ax_fcurr, ax_fvalue, ax_fcrate, ax_fcmult, ax_fcdec,
+        ax_srcco, ax_unique, ax_project, ax_job, ax_jrnl, ax_nlpdate,
+        datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', 'A', ?, ?, ?,
+        ?, ?, '   ', ?, 1.0, 0, 2.0,
+        'I', ?, '        ', '        ', ?, ?,
+        ?, ?, 1
+      )`,
+      [
+        anomlIdStart + 1,
+        args.feesNominalAccount,
+        args.postDate,
+        netFees,
+        args.reference.slice(0, 20),
+        feesComment.slice(0, 40),
+        doneFlag,
+        feesExpenseFvalue,
+        feesUnique,
+        jrnlNum,
+        args.postDate,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+    anomlCount = 2;
+
+    // anoml VAT leg (DR, +VAT) — only when VAT present + nominal known
+    if (hasVatLine) {
+      const feesVatFvalue = Math.round(vatAmount * 100);
+      await trx.raw(
+        `INSERT INTO anoml (
+          id, ax_nacnt, ax_ncntr, ax_source, ax_date, ax_value, ax_tref,
+          ax_comment, ax_done, ax_fcurr, ax_fvalue, ax_fcrate, ax_fcmult, ax_fcdec,
+          ax_srcco, ax_unique, ax_project, ax_job, ax_jrnl, ax_nlpdate,
+          datecreated, datemodified, state
+        ) VALUES (
+          ?, ?, '    ', 'A', ?, ?, ?,
+          ?, ?, '   ', ?, 1.0, 0, 2.0,
+          'I', ?, '        ', '        ', ?, ?,
+          ?, ?, 1
+        )`,
+        [
+          anomlIdStart + 2,
+          vatNominalAccount,
+          args.postDate,
+          vatAmount,
+          args.reference.slice(0, 20),
+          // legacy slices to 36 then appends ' VAT' (40 total).
+          `${feesComment.slice(0, 36)} VAT`,
+          doneFlag,
+          feesVatFvalue,
+          feesVatUnique,
+          jrnlNum,
+          args.postDate,
+          args.now.iso,
+          args.now.iso,
+        ],
+      );
+      anomlCount = 3;
+    }
+  }
+
   return {
     entryNumber: feesEntryNumber,
     bankAccount: args.bankAccount,
@@ -969,7 +1158,8 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
     atranSumPence: -grossFeesPence,
     feesUnique,
     feesVatUnique: hasVatLine ? feesVatUnique : null,
-    ntranCount: hasVatLine ? 3 : 2,
+    ntranCount,
+    anomlCount,
   };
 }
 
@@ -983,6 +1173,9 @@ interface PostTransferArgs {
   period: number;
   now: NowParts;
   transferCbtype: string | null;
+  inputBy: string;
+  /** Period decision — gates ntran (postToNominal), anoml uses ax_done. */
+  decision: PeriodPostingDecision;
 }
 
 interface TransferPostResult {
@@ -992,7 +1185,11 @@ interface TransferPostResult {
   destBank: string;
   expectedSourcePence: number; // -netPence
   expectedDestPence: number; // +netPence
-  sharedUnique: string; // for ntran/anoml pair check
+  sharedUnique: string; // for anoml pair check (shared ax_unique)
+  /** Distinct per-leg ntran pstids — legacy 9325-9327, 9470-9471. */
+  ntranPstidSource: string;
+  ntranPstidDest: string;
+  ntranWritten: boolean;
 }
 
 async function postDestinationTransfer(
@@ -1012,10 +1209,39 @@ async function postDestinationTransfer(
     transferType = rows[0]?.ay_cbtype?.toString().trim() ?? 'T1';
   }
 
+  // Mint 3 distinct uniques up-front. Legacy mints
+  // `shared_unique` (for anoml ax_unique pair) + `ntran_pstid_source`
+  // + `ntran_pstid_dest`. BLOCKER #6 fix.
+  // opera_sql_import.py:9324-9327.
   const sharedUnique = generateOperaUniqueId();
+  const ntranPstidSource = generateOperaUniqueId();
+  const ntranPstidDest = generateOperaUniqueId();
   const journal = await getNextJournal(trx, 1);
-  const reference = args.reference.slice(0, 20) || `TRF-${args.destBank}`;
+  // Audit HIGH: don't invent a synthetic reference. Legacy uses
+  // reference[:20] directly (opera_sql_import.py:9420). Caller
+  // upstream defaults to 'GoCardless' so this never lands as empty.
+  const reference = args.reference.slice(0, 20);
   const netPence = Math.round(args.netAmount * 100);
+
+  // Load bank metadata for both sides — BLOCKER #7: source atran must
+  // embed dest sort/account; dest atran can leave them blank (legacy
+  // 9417 + 9449). Also: at_name must be the OTHER bank's nk_desc
+  // (audit HIGH — legacy lines 9416, 9448).
+  const sourceInfo = await loadBankInfo(trx, args.sourceBank);
+  const destInfo = await loadBankInfo(trx, args.destBank);
+
+  // Build trnref/comment per legacy 9293-9295.
+  // Each leg's nt_trnref shows the OTHER side's bank name.
+  const ntranComment = reference.padEnd(50).slice(0, 50);
+  const sourceNtranTrnref = (
+    destInfo.description.slice(0, 30).padEnd(30) + 'Transfer  (RT)     '
+  ).slice(0, 50);
+  const destNtranTrnref = (
+    sourceInfo.description.slice(0, 30).padEnd(30) + 'Transfer  (RT)     '
+  ).slice(0, 50);
+  // ae_comment / at_comment: short 40-char narrative.
+  const transferCommentOut = `Transfer to ${destInfo.description}`.slice(0, 40);
+  const transferCommentIn = `Transfer from ${sourceInfo.description}`.slice(0, 40);
 
   // Source: aentry + atran (negative)
   const entryOut = await incrementAtypeEntry(trx, transferType);
@@ -1032,7 +1258,7 @@ async function postDestinationTransfer(
       ?, ?, '    ', ?, ?, 0,
       ?, 0, 0, 0, ?,
       ?, 0, 0, 0, 1,
-      0, ?, ?, 'GOCARDLS', 'GC net transfer to dest bank',
+      0, ?, ?, ?, ?,
       0, 0, '  ', ?, ?, 1
     )`,
     [
@@ -1045,10 +1271,14 @@ async function postDestinationTransfer(
       -netPence,
       args.now.date,
       args.now.time.slice(0, 8),
+      args.inputBy.slice(0, 8),
+      transferCommentOut,
       args.now.iso,
       args.now.iso,
     ],
   );
+  // Source atran — embeds DEST bank's sort/account (BLOCKER #7),
+  // dest bank description as at_name. Legacy opera_sql_import.py:9417.
   await trx.raw(
     `INSERT INTO atran (
       id, at_acnt, at_cntr, at_cbtype, at_entry, at_inputby,
@@ -1062,11 +1292,11 @@ async function postDestinationTransfer(
       at_bsref, at_bsname, at_vattycd, at_project, at_job,
       at_bic, at_iban, at_memo, datecreated, datemodified, state
     ) VALUES (
-      ?, ?, '    ', ?, ?, 'GOCARDLS',
+      ?, ?, '    ', ?, ?, ?,
       8, ?, ?, 1, ?,
       0, '   ', 1.0, 0, 2,
-      ?, ?, '', '        ', '',
-      '        ', '         ', 0, 0, 0,
+      ?, ?, ?, '        ', '',
+      ?, ?, 0, 0, 0,
       0, 0, '', 0, 0,
       0, 0, ?, 0, '0       ',
       ?, 'I', 0, ' ', '      ',
@@ -1078,11 +1308,15 @@ async function postDestinationTransfer(
       args.sourceBank,
       transferType,
       entryOut,
+      args.inputBy.slice(0, 8),
       args.postDate,
       args.postDate,
       -netPence,
       args.destBank,
-      `Transfer to ${args.destBank}`.slice(0, 35),
+      destInfo.description.slice(0, 35),
+      transferCommentOut,
+      destInfo.sortCode.slice(0, 8).padEnd(8),
+      destInfo.accountNumber.slice(0, 9).padEnd(9),
       sharedUnique,
       reference,
       args.now.iso,
@@ -1105,7 +1339,7 @@ async function postDestinationTransfer(
       ?, ?, '    ', ?, ?, 0,
       ?, 0, 0, 0, ?,
       ?, 0, 0, 0, 1,
-      0, ?, ?, 'GOCARDLS', 'GC net transfer from GC bank',
+      0, ?, ?, ?, ?,
       0, 0, '  ', ?, ?, 1
     )`,
     [
@@ -1118,10 +1352,16 @@ async function postDestinationTransfer(
       netPence,
       args.now.date,
       args.now.time.slice(0, 8),
+      args.inputBy.slice(0, 8),
+      transferCommentIn,
       args.now.iso,
       args.now.iso,
     ],
   );
+  // Dest atran — at_name uses SOURCE bank description; legacy leaves
+  // dest atran's at_sort/at_number BLANK (line 9449) since the user
+  // already knows which bank received it (this is the dest bank's
+  // own cashbook).
   await trx.raw(
     `INSERT INTO atran (
       id, at_acnt, at_cntr, at_cbtype, at_entry, at_inputby,
@@ -1135,10 +1375,10 @@ async function postDestinationTransfer(
       at_bsref, at_bsname, at_vattycd, at_project, at_job,
       at_bic, at_iban, at_memo, datecreated, datemodified, state
     ) VALUES (
-      ?, ?, '    ', ?, ?, 'GOCARDLS',
+      ?, ?, '    ', ?, ?, ?,
       8, ?, ?, 1, ?,
       0, '   ', 1.0, 0, 2,
-      ?, ?, '', '        ', '',
+      ?, ?, ?, '        ', '',
       '        ', '         ', 0, 0, 0,
       0, 0, '', 0, 0,
       0, 0, ?, 0, '0       ',
@@ -1151,11 +1391,13 @@ async function postDestinationTransfer(
       args.destBank,
       transferType,
       entryIn,
+      args.inputBy.slice(0, 8),
       args.postDate,
       args.postDate,
       netPence,
       args.sourceBank,
-      `Transfer from ${args.sourceBank}`.slice(0, 35),
+      sourceInfo.description.slice(0, 35),
+      transferCommentIn,
       sharedUnique,
       reference,
       args.now.iso,
@@ -1167,93 +1409,204 @@ async function postDestinationTransfer(
   await updateNbankBalance(trx, args.sourceBank, -args.netAmount);
   await updateNbankBalance(trx, args.destBank, args.netAmount);
 
-  // ntran pair + nacnt
-  const sourceType =
-    (await getNacntType(trx, args.sourceBank)) ??
-    ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
-  const destType =
-    (await getNacntType(trx, args.destBank)) ??
-    ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
-  const ntranIdStart = await getNextId(trx, 'ntran', 2);
-  await trx.raw(
-    `INSERT INTO ntran (
-      id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
-      nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
-      nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
-      nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
-      nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
-      nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
-      nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
-      nt_distrib, datecreated, datemodified, state
-    ) VALUES (
-      ?, ?, '    ', ?, ?, ?,
-      '', 'GOCARDLS', 'T', 'GC net transfer', 'GC net transfer',
-      ?, ?, ?, ?, 0,
-      0, 0, '   ', 0, 0,
-      0, 0, 'I', '', '        ',
-      '        ', 'T', 0, ?, 0,
-      0, 0, 0, 0, 0,
-      0, ?, ?, 1
-    )`,
-    [
-      ntranIdStart,
-      args.sourceBank,
-      sourceType.na_type,
-      sourceType.na_subt,
-      journal,
-      args.postDate,
-      -args.netAmount,
-      args.year,
-      args.period,
-      sharedUnique,
-      args.now.iso,
-      args.now.iso,
-    ],
-  );
-  await updateNacntBalance(trx, args.sourceBank, -args.netAmount, {
-    period: args.period,
-    year: args.year,
-  });
-  await trx.raw(
-    `INSERT INTO ntran (
-      id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
-      nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
-      nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
-      nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
-      nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
-      nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
-      nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
-      nt_distrib, datecreated, datemodified, state
-    ) VALUES (
-      ?, ?, '    ', ?, ?, ?,
-      '', 'GOCARDLS', 'T', 'GC net transfer', 'GC net transfer',
-      ?, ?, ?, ?, 0,
-      0, 0, '   ', 0, 0,
-      0, 0, 'I', '', '        ',
-      '        ', 'T', 0, ?, 0,
-      0, 0, 0, 0, 0,
-      0, ?, ?, 1
-    )`,
-    [
-      ntranIdStart + 1,
-      args.destBank,
-      destType.na_type,
-      destType.na_subt,
-      journal,
-      args.postDate,
-      args.netAmount,
-      args.year,
-      args.period,
-      sharedUnique,
-      args.now.iso,
-      args.now.iso,
-    ],
-  );
-  await updateNacntBalance(trx, args.destBank, args.netAmount, {
-    period: args.period,
-    year: args.year,
-  });
-  await insertNjmemo(trx, journal, 'Bank Transfer (GC net)');
+  // ntran pair + nacnt — GATED on decision.postToNominal (BLOCKER #1).
+  // Lock-ordered alphabetical by bank code to match legacy
+  // 9306-9310 (audit HIGH: lock-ordering). Each leg uses a DISTINCT
+  // pstid (BLOCKER #6). nt_trtype = 'A' (BLOCKER #5) and the trnref
+  // shows the OTHER bank's name (audit HIGH).
+  let ntranWritten = false;
+  if (args.decision.postToNominal) {
+    const banksOrdered = [args.sourceBank, args.destBank].sort();
+    const sourceIsFirst = banksOrdered[0] === args.sourceBank;
+    const firstBank = banksOrdered[0]!;
+    const secondBank = banksOrdered[1]!;
+    const firstValue = sourceIsFirst ? -args.netAmount : args.netAmount;
+    const secondValue = sourceIsFirst ? args.netAmount : -args.netAmount;
+    const firstTrnref = sourceIsFirst ? sourceNtranTrnref : destNtranTrnref;
+    const secondTrnref = sourceIsFirst ? destNtranTrnref : sourceNtranTrnref;
+    const firstPstid = sourceIsFirst ? ntranPstidSource : ntranPstidDest;
+    const secondPstid = sourceIsFirst ? ntranPstidDest : ntranPstidSource;
+
+    const firstBankType =
+      (await getNacntType(trx, firstBank)) ??
+      ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
+    const secondBankType =
+      (await getNacntType(trx, secondBank)) ??
+      ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
+    const ntranIdStart = await getNextId(trx, 'ntran', 2);
+
+    // First (lock order) leg — legacy 9481-9504
+    await trx.raw(
+      `INSERT INTO ntran (
+        id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
+        nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
+        nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
+        nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
+        nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
+        nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
+        nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
+        nt_distrib, datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', ?, ?, ?,
+        '', ?, 'A', ?, ?,
+        ?, ?, ?, ?, 0,
+        0, 0, '   ', 0, 0,
+        0, 0, 'I', '', '        ',
+        '        ', 'T', 0, ?, 0,
+        0, 0, 0, 0, 0,
+        0, ?, ?, 1
+      )`,
+      [
+        ntranIdStart,
+        firstBank,
+        firstBankType.na_type,
+        firstBankType.na_subt,
+        journal,
+        args.inputBy.slice(0, 10),
+        ntranComment,
+        firstTrnref,
+        args.postDate,
+        firstValue,
+        args.year,
+        args.period,
+        firstPstid,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+    await updateNacntBalance(trx, firstBank, firstValue, {
+      period: args.period,
+      year: args.year,
+    });
+
+    // Second leg
+    await trx.raw(
+      `INSERT INTO ntran (
+        id, nt_acnt, nt_cntr, nt_type, nt_subt, nt_jrnl,
+        nt_ref, nt_inp, nt_trtype, nt_cmnt, nt_trnref,
+        nt_entr, nt_value, nt_year, nt_period, nt_rvrse,
+        nt_prevyr, nt_consol, nt_fcurr, nt_fvalue, nt_fcrate,
+        nt_fcmult, nt_fcdec, nt_srcco, nt_cdesc, nt_project,
+        nt_job, nt_posttyp, nt_pstgrp, nt_pstid, nt_srcnlid,
+        nt_recurr, nt_perpost, nt_rectify, nt_recjrnl, nt_vatanal,
+        nt_distrib, datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', ?, ?, ?,
+        '', ?, 'A', ?, ?,
+        ?, ?, ?, ?, 0,
+        0, 0, '   ', 0, 0,
+        0, 0, 'I', '', '        ',
+        '        ', 'T', 0, ?, 0,
+        0, 0, 0, 0, 0,
+        0, ?, ?, 1
+      )`,
+      [
+        ntranIdStart + 1,
+        secondBank,
+        secondBankType.na_type,
+        secondBankType.na_subt,
+        journal,
+        args.inputBy.slice(0, 10),
+        ntranComment,
+        secondTrnref,
+        args.postDate,
+        secondValue,
+        args.year,
+        args.period,
+        secondPstid,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+    await updateNacntBalance(trx, secondBank, secondValue, {
+      period: args.period,
+      year: args.year,
+    });
+
+    await insertNjmemo(trx, journal, 'Cashbook Ledger Transfer (RT)');
+    ntranWritten = true;
+  }
+
+  // anoml pair — BLOCKER #4. ax_source='A', shared ax_unique, FC
+  // populated. Lock-ordered alphabetical. ax_done from decision;
+  // ax_jrnl = journal when NL posted, 0 otherwise. Faithful port of
+  // opera_sql_import.py:9547-9594. Snapshot
+  // cashbook_bank_transfer_20260407_121520.json rows 8801/8802:
+  // ax_source='A', ax_fcrate=1.0, ax_unique='_7FR0Q95FY' shared.
+  if (args.decision.postToTransferFile) {
+    const banksOrdered = [args.sourceBank, args.destBank].sort();
+    const sourceIsFirst = banksOrdered[0] === args.sourceBank;
+    const firstBank = banksOrdered[0]!;
+    const secondBank = banksOrdered[1]!;
+    const firstValue = sourceIsFirst ? -args.netAmount : args.netAmount;
+    const secondValue = sourceIsFirst ? args.netAmount : -args.netAmount;
+    const firstFvalue = Math.round(firstValue * 100);
+    const secondFvalue = Math.round(secondValue * 100);
+    const doneFlag = args.decision.transferFileDoneFlag;
+    const jrnlNum = args.decision.postToNominal ? journal : 0;
+    const anomlIdStart = await getNextId(trx, 'anoml', 2);
+
+    await trx.raw(
+      `INSERT INTO anoml (
+        id, ax_nacnt, ax_ncntr, ax_source, ax_date, ax_value, ax_tref,
+        ax_comment, ax_done, ax_fcurr, ax_fvalue, ax_fcrate, ax_fcmult, ax_fcdec,
+        ax_srcco, ax_unique, ax_project, ax_job, ax_jrnl, ax_nlpdate,
+        datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', 'A', ?, ?, ?,
+        ?, ?, '   ', ?, 1.0, 0, 2.0,
+        'I', ?, '        ', '        ', ?, ?,
+        ?, ?, 1
+      )`,
+      [
+        anomlIdStart,
+        firstBank,
+        args.postDate,
+        firstValue,
+        reference,
+        ntranComment.slice(0, 40),
+        doneFlag,
+        firstFvalue,
+        sharedUnique,
+        jrnlNum,
+        args.postDate,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+
+    await trx.raw(
+      `INSERT INTO anoml (
+        id, ax_nacnt, ax_ncntr, ax_source, ax_date, ax_value, ax_tref,
+        ax_comment, ax_done, ax_fcurr, ax_fvalue, ax_fcrate, ax_fcmult, ax_fcdec,
+        ax_srcco, ax_unique, ax_project, ax_job, ax_jrnl, ax_nlpdate,
+        datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '    ', 'A', ?, ?, ?,
+        ?, ?, '   ', ?, 1.0, 0, 2.0,
+        'I', ?, '        ', '        ', ?, ?,
+        ?, ?, 1
+      )`,
+      [
+        anomlIdStart + 1,
+        secondBank,
+        args.postDate,
+        secondValue,
+        reference,
+        ntranComment.slice(0, 40),
+        doneFlag,
+        secondFvalue,
+        sharedUnique,
+        jrnlNum,
+        args.postDate,
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+    // Suppress unused-var warning when ntran path didn't run — we still
+    // return the variables for the verifier's post-write checks.
+    void secondBank;
+  }
 
   return {
     sourceEntry: entryOut,
@@ -1263,6 +1616,9 @@ async function postDestinationTransfer(
     expectedSourcePence: -netPence,
     expectedDestPence: netPence,
     sharedUnique,
+    ntranPstidSource,
+    ntranPstidDest,
+    ntranWritten,
   };
 }
 
@@ -1307,7 +1663,31 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
       const controlAccounts = await getControlAccounts(operaDb);
       const slControl = controlAccounts.debtorsControl;
 
-      await operaDb.transaction(async (trx) => {
+      // Build the period-posting decision ONCE per batch — outside the
+      // trx so an early reject (period closed, OPA off + back-period)
+      // never opens a write surface. GoCardless lands in the SALES
+      // ledger (SL). Faithful port of opera_sql_import.py:2135 (which
+      // builds posting_decision before the inner _do_gocardless_batch
+      // function captures it). BLOCKER #1.
+      const decision = await getPeriodPostingDecision(
+        operaDb,
+        request.postDateString,
+        'SL',
+      );
+      if (!decision.canPost) {
+        return {
+          success: false,
+          records_imported: 0,
+          batch_ref: null,
+          warnings,
+          errors: [decision.errorMessage ?? 'Period closed for posting'],
+        };
+      }
+
+      // Deadlock-retry wrapper — SQL Server 1205 victims get 3 retries
+      // with 100ms / 500ms / 1500ms backoff. BLOCKER #9. Faithful port
+      // of execute_with_deadlock_retry (opera_sql_import.py:6876).
+      await executeWithDeadlockRetry(operaDb, async (trx) => {
         const now = nowMs();
         const { period, year } = await getPeriodForDate(trx, request.postDate);
 
@@ -1353,7 +1733,7 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
           reference: request.reference,
           totalPence,
           completeBatch: request.completeBatch,
-          inputBy: 'GOCARDLS',
+          inputBy: request.inputBy,
           nowDate: now.date,
           nowTime: now.time,
           nowIso: now.iso,
@@ -1382,7 +1762,7 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
             bankAccount: request.postingBank,
             cbtype,
             entryNumber,
-            inputBy: 'GOCARDLS',
+            inputBy: request.inputBy,
             postDate: request.postDateString,
             amountPence,
             customerAccount: cust.account,
@@ -1436,7 +1816,16 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
           // Bank balance update — always
           await updateNbankBalance(trx, request.postingBank, amountPounds);
 
-          if (request.completeBatch) {
+          // ntran pair (NL post) — GATED on completeBatch AND
+          // decision.postToNominal. Legacy opera_sql_import.py:6397.
+          // When RTU=OFF or back-period, this branch skips and only
+          // anoml is written. BLOCKER #1.
+          const writeNtran =
+            request.completeBatch && decision.postToNominal;
+          const writeAnoml =
+            request.completeBatch && decision.postToTransferFile;
+
+          if (writeNtran) {
             const bankType =
               (await getNacntType(trx, request.postingBank)) ??
               ({ na_type: 'B ', na_subt: 'BC' } as NacntType);
@@ -1456,7 +1845,7 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
               salesLedgerControl: cust.controlAccount,
               controlType,
               journal: nextJournal,
-              inputBy: 'GOCARDLS',
+              inputBy: request.inputBy,
               comment: ntranComment,
               trnref: ntranTrnref,
               postDate: request.postDateString,
@@ -1481,9 +1870,16 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
               nextJournal,
               'Cashbook Ledger Transfer (RT)',
             );
+          }
 
+          if (writeAnoml) {
             const anomlIdStart = await getNextId(trx, 'anoml', 2);
             const anomlComment = (cust.name.slice(0, 30).padEnd(30) + cbtypeDesc).slice(0, 40);
+            // ax_jrnl = next_journal when NL pair was written (legacy
+            // 6466: `next_journal - 1` because legacy increments
+            // before this block — in TS we increment AFTER, so this
+            // matches `nextJournal` directly). When NL skipped, 0.
+            const anomlJournal = writeNtran ? nextJournal : 0;
             await insertAnomlPair(trx, {
               idStart: anomlIdStart,
               bankAccount: request.postingBank,
@@ -1492,11 +1888,18 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
               amountPounds,
               reference: request.reference,
               comment: anomlComment,
-              doneFlag: 'Y', // post-to-NL completed
+              // BLOCKER #2 fix: derive from decision, never hardcode.
+              doneFlag: decision.transferFileDoneFlag,
               atranUnique,
-              journal: nextJournal,
+              journal: anomlJournal,
               nowIso: now.iso,
             });
+          }
+
+          // Legacy only advances the journal when the NL leg was
+          // actually consumed (opera_sql_import.py:6462). When
+          // postToNominal=false, the per-payment journal stays unused.
+          if (writeNtran) {
             nextJournal += 1;
           }
 
@@ -1533,6 +1936,8 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
             period,
             now,
             feesVatCode: request.feesVatCode,
+            inputBy: request.inputBy,
+            decision,
           });
         }
 
@@ -1553,6 +1958,8 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
             period,
             now,
             transferCbtype: request.transferCbtype,
+            inputBy: request.inputBy,
+            decision,
           });
         }
 
@@ -1589,8 +1996,10 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
         });
         // completeBatch wrote per-payment ntran + anoml pairs — verify
         // every pair exists and balances. Bulk query: 1 round-trip
-        // each regardless of payment count.
-        if (request.completeBatch) {
+        // each regardless of payment count. Each assertion is gated
+        // on the same decision flag used by the writer above so we
+        // don't assert pairs that were never written (e.g. RTU=OFF).
+        if (request.completeBatch && decision.postToNominal) {
           await assertBalancedPairsBulk(trx, {
             table: 'ntran',
             sharedUniques: ntranPstids,
@@ -1598,6 +2007,8 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
             batchRef: entryNumber,
             label: 'customer ntran pair',
           });
+        }
+        if (request.completeBatch && decision.postToTransferFile) {
           await assertBalancedPairsBulk(trx, {
             table: 'anoml',
             sharedUniques: atranUniques,
@@ -1674,13 +2085,30 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
             expectedSumPence: transferResult.expectedDestPence,
             label: 'transfer-in line',
           });
-          await assertBalancedPairsBulk(trx, {
-            table: 'ntran',
-            sharedUniques: [transferResult.sharedUnique],
-            expectedRowsPerUnique: 2,
-            batchRef: transferResult.sourceEntry,
-            label: 'transfer ntran',
-          });
+          // sharedUnique now keys the anoml pair (ax_unique). ntran
+          // legs use DISTINCT pstids per leg (BLOCKER #6), so we check
+          // them as two singleton rows rather than one balanced pair.
+          if (transferResult.ntranWritten) {
+            await assertBalancedPairsBulk(trx, {
+              table: 'ntran',
+              sharedUniques: [
+                transferResult.ntranPstidSource,
+                transferResult.ntranPstidDest,
+              ],
+              expectedRowsPerUnique: 1,
+              batchRef: transferResult.sourceEntry,
+              label: 'transfer ntran',
+            });
+          }
+          if (decision.postToTransferFile) {
+            await assertBalancedPairsBulk(trx, {
+              table: 'anoml',
+              sharedUniques: [transferResult.sharedUnique],
+              expectedRowsPerUnique: 2,
+              batchRef: transferResult.sourceEntry,
+              label: 'transfer anoml',
+            });
+          }
         }
 
         // Stash context for Phase C (post-commit) — fires after the
@@ -1704,7 +2132,7 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
               }
             : null,
         };
-      });
+      }, `gocardless_batch(${request.payments.length} payments, ${request.postingBank})`);
 
       // --- Phase C verification (post-commit, fresh pool connection) ---
       // The trx has committed. Re-read the headers we wrote from a

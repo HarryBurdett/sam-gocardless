@@ -81,7 +81,12 @@ export async function validateImportRequest(operaDb, appDb, input, settings, kno
         return { success: false, error: 'No payments provided' };
     }
     if (input.payoutId) {
-        const alreadyImported = await isPayoutImported(appDb, input.payoutId);
+        // Scope idempotency to the target Opera system so opera_se imports
+        // can't collide with opera_3 imports. Audit HIGH: previously called
+        // with no opts → MANUAL-* skipped rows also blocked re-import.
+        const alreadyImported = await isPayoutImported(appDb, input.payoutId, {
+            targetSystem: 'opera_se',
+        });
         if (alreadyImported) {
             // Orphan-aware check: if the gocardless_imports row references Opera
             // entries that no longer exist (Opera SQL restore, manual deletion in
@@ -261,6 +266,10 @@ export async function validateImportRequest(operaDb, appDb, input, settings, kno
             destinationBank,
             transferCbtype: transferCbtype || null,
             emailId: input.emailId ?? null,
+            // Operator code: default 'GOCARDLS'; slice to 10 (ntran.nt_inp
+            // width) here so downstream INSERTs only need to re-slice for
+            // narrower fields. Audit-trail fix per audit HIGH.
+            inputBy: (input.inputBy ?? '').trim().slice(0, 10) || 'GOCARDLS',
             warnings,
         },
     };
@@ -351,7 +360,8 @@ export async function importGocardlessBatch(operaDb, appDb, input, settings, kno
                 description: p.description,
             }))),
             batchRef: result.batch_ref ?? null,
-            importedBy: 'GOCARDLS',
+            // Thread the validated operator code through audit history.
+            importedBy: request.inputBy || 'GOCARDLS',
             postDate: request.postDateString,
             emailId: request.emailId,
         });
