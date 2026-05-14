@@ -303,20 +303,24 @@ function GoCardlessImportInner() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState<Array<{
     id: number;
-    email_subject: string;
-    email_date: string;
     bank_reference: string;
-    payout_id: string;
+    payment_date: string | null;
+    imported_at: string;
     source: 'email' | 'api';
     gross_amount: number;
     net_amount: number;
-    gocardless_fees: number;
+    // The API returns `fees_amount` (legacy parity with Python). The FE
+    // also uses `gocardless_fees` in places — kept for back-compat.
+    fees_amount?: number;
+    gocardless_fees?: number;
     vat_on_fees: number;
-    payment_count: number;
-    receipt_date: string;
-    imported_by: string;
-    import_date?: string;
-    payments_json?: string;
+    currency?: string;
+    bank_code?: string;
+    cbtype?: string;
+    imported_by?: string;
+    target_system?: string;
+    payments?: Array<Record<string, unknown>>;
+    opera_entry_refs?: string[];
   }>>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLimit, setHistoryLimit] = useState(50);
@@ -373,6 +377,16 @@ function GoCardlessImportInner() {
     skipped_duplicates: number;
     skipped_already_imported: number;
     current_period?: { year: number; period: number };
+  } | null>(null);
+  // Surfaced when fetch-api-payouts detects gocardless_imports rows whose
+  // Opera entry is missing (likely an Opera restore). Informational only —
+  // the orphan-aware early filter automatically promotes the missing
+  // batches into the available-to-import list, so the operator can just
+  // click Import on each.
+  const [orphanCheck, setOrphanCheck] = useState<{
+    detected: boolean;
+    count: number;
+    summary: Array<{ bank_reference: string; gross_amount: number }>;
   } | null>(null);
 
   // Restore from company-prefixed sessionStorage when companyId is available
@@ -972,6 +986,13 @@ function GoCardlessImportInner() {
         current_period: undefined
       });
 
+      // Capture orphan-check signal so the banner can surface Opera-restore situations
+      setOrphanCheck(
+        data.orphan_check && data.orphan_check.detected
+          ? data.orphan_check
+          : null,
+      );
+
       if (data.batches && data.batches.length > 0) {
         const batchesWithState = data.batches.map((b: EmailBatch) => ({
           ...b,
@@ -1169,12 +1190,24 @@ function GoCardlessImportInner() {
         {historyData.length > 0 && (
           <div className="text-sm text-gray-600">
             <span className="font-medium">Recent:</span>
-            {historyData.slice(0, 2).map((h, i) => (
-              <span key={h.id} className="ml-2">
-                {i > 0 && '• '}
-                {new Date(h.import_date || h.email_date).toLocaleDateString()} - £{h.gross_amount?.toFixed(2) || '0.00'}
-              </span>
-            ))}
+            {historyData.slice(0, 2).map((h, i) => {
+              // The API returns `payment_date` (YYYY-MM-DD) and `imported_at` (ISO).
+              // The pre-fix code looked up `import_date`/`email_date` — neither field
+              // is in the API response → "Invalid Date".
+              const dateSource = h.payment_date || h.imported_at;
+              const display = dateSource
+                ? (() => {
+                    const d = new Date(dateSource);
+                    return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+                  })()
+                : '-';
+              return (
+                <span key={h.id} className="ml-2">
+                  {i > 0 && '• '}
+                  {display} - £{h.gross_amount?.toFixed(2) || '0.00'}
+                </span>
+              );
+            })}
           </div>
         )}
         <button
@@ -1407,11 +1440,27 @@ function GoCardlessImportInner() {
                   <tbody className="divide-y divide-gray-100">
                     {historyData.map((h) => {
                       // Determine currency symbol based on EUR indicator
-                      const isEur = h.imported_by?.includes('EUR') || h.bank_reference?.includes('(EUR)');
+                      const isEur = h.imported_by?.includes('EUR') || h.bank_reference?.includes('(EUR)') || h.currency === 'EUR';
                       const currencySymbol = isEur ? '€' : '£';
+                      // The API returns `payment_date` (YYYY-MM-DD) and `imported_at` (ISO).
+                      // Prefer payment_date (the bank-side date — what an operator
+                      // recognises); fall back to imported_at when missing.
+                      const dateSource = h.payment_date || h.imported_at;
+                      const displayDate = dateSource
+                        ? (() => {
+                            const d = new Date(dateSource);
+                            return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+                          })()
+                        : '-';
+                      // API returns the actual `payments` array (with enrichment).
+                      // Older versions returned a separate `payment_count` scalar;
+                      // count from the array which is what the current backend emits.
+                      const paymentsCount = h.payments?.length ?? 0;
+                      // Legacy `gocardless_fees` field-name fallback to `fees_amount`.
+                      const feesAmount = h.gocardless_fees ?? h.fees_amount ?? 0;
                       return (<>
                       <tr key={h.id} className="hover:bg-gray-50">
-                        <td className="p-2 text-gray-900">{new Date(h.import_date || h.email_date).toLocaleDateString()}</td>
+                        <td className="p-2 text-gray-900">{displayDate}</td>
                         <td className="p-2 text-gray-600 font-mono text-xs">{h.bank_reference || '-'}</td>
                         <td className="p-2 text-center">
                           <span className={`px-2 py-0.5 rounded text-xs ${h.source === 'api' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
@@ -1419,10 +1468,10 @@ function GoCardlessImportInner() {
                           </span>
                         </td>
                         <td className="p-2 text-right text-gray-900">{currencySymbol}{h.gross_amount?.toFixed(2) || '0.00'}</td>
-                        <td className="p-2 text-right text-gray-500">{currencySymbol}{h.gocardless_fees?.toFixed(2) || '0.00'}</td>
+                        <td className="p-2 text-right text-gray-500">{currencySymbol}{feesAmount.toFixed(2)}</td>
                         <td className="p-2 text-right text-gray-500">{currencySymbol}{h.vat_on_fees?.toFixed(2) || '0.00'}</td>
                         <td className="p-2 text-right text-gray-600">{currencySymbol}{h.net_amount?.toFixed(2) || '0.00'}</td>
-                        <td className="p-2 text-center text-gray-600">{h.payment_count || 0}</td>
+                        <td className="p-2 text-center text-gray-600">{paymentsCount}</td>
                         <td className="p-2">
                           <div className="flex items-center justify-center gap-1">
                             <button
@@ -1443,10 +1492,18 @@ function GoCardlessImportInner() {
                         </td>
                       </tr>
                       {expandedHistoryId === h.id && (() => {
+                        // The API now returns `payments` as an already-parsed array
+                        // enriched with Opera + GC customer names. Older versions
+                        // returned `payments_json` as a string blob — still tolerated
+                        // as a fallback for any cached/legacy rows.
                         let payments: Array<{ gc_customer_name?: string; customer_name?: string; opera_customer_name?: string; customer_account?: string; amount?: number; description?: string }> = [];
-                        try {
-                          if (h.payments_json) payments = JSON.parse(h.payments_json);
-                        } catch { /* ignore parse errors */ }
+                        if (Array.isArray(h.payments)) {
+                          payments = h.payments as typeof payments;
+                        } else if ((h as { payments_json?: string }).payments_json) {
+                          try {
+                            payments = JSON.parse((h as { payments_json?: string }).payments_json ?? '[]');
+                          } catch { /* ignore parse errors */ }
+                        }
                         return (
                           <tr key={`${h.id}-detail`}>
                             <td colSpan={9} className="p-0">
@@ -1645,6 +1702,28 @@ function GoCardlessImportInner() {
                 <span className="text-green-700 font-medium">Using GoCardless API</span>
                 {apiSandbox && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded">Sandbox</span>}
             </div>
+
+            {orphanCheck?.detected && (
+              <div className="mb-3 p-3 bg-amber-50 border border-amber-300 rounded-lg flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 text-sm text-amber-900">
+                  <div className="font-semibold">Opera restore likely detected — {orphanCheck.count} previously-imported batch(es) no longer in Opera</div>
+                  <div className="mt-1 text-amber-800">
+                    SAM previously imported these batches, but Opera no longer contains the underlying entries
+                    (e.g. after an Opera SQL restore). They now appear below as ready-to-import — click <strong>Import</strong> on each
+                    to post fresh to Opera.
+                  </div>
+                  {orphanCheck.summary.length > 0 && (
+                    <ul className="mt-2 text-xs text-amber-700 list-disc list-inside">
+                      {orphanCheck.summary.slice(0, 5).map((o, i) => (
+                        <li key={i}>{o.bank_reference} — £{Number(o.gross_amount).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
+                      ))}
+                      {orphanCheck.count > 5 && <li>… and {orphanCheck.count - 5} more</li>}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-4">
               <div className="flex-1 text-sm text-gray-600">

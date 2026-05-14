@@ -1,5 +1,6 @@
 import { validateAccountCode, validateBankCode, validateCbtype, SqlInputValidationError, validatePostingPeriod, getHomeCurrency, } from '../_shared/index.js';
 import { isPayoutImported } from './import-idempotency.js';
+import { checkOrphanedImports } from './restore-recovery.js';
 function parseYmd(input) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim());
     if (!m)
@@ -82,11 +83,30 @@ export async function validateImportRequest(operaDb, appDb, input, settings, kno
     if (input.payoutId) {
         const alreadyImported = await isPayoutImported(appDb, input.payoutId);
         if (alreadyImported) {
-            return {
-                success: false,
-                error: `Payout ${input.payoutId} has already been imported. Refusing to post the same payout twice. If you genuinely need to re-post, reverse the original first.`,
-                duplicate_payout: true,
-            };
+            // Orphan-aware check: if the gocardless_imports row references Opera
+            // entries that no longer exist (Opera SQL restore, manual deletion in
+            // Opera Cashbook), the user genuinely needs to re-post — block only
+            // when Opera still has the underlying entry.
+            let isOrphan = false;
+            try {
+                const orphanResult = await checkOrphanedImports(operaDb, appDb);
+                if (orphanResult.success) {
+                    isOrphan = orphanResult.orphans.some((o) => o.payout_id === input.payoutId);
+                }
+            }
+            catch {
+                // Best-effort — fall through to the strict refusal if the orphan
+                // check fails; safer to block than to risk a double-post.
+            }
+            if (!isOrphan) {
+                return {
+                    success: false,
+                    error: `Payout ${input.payoutId} has already been imported. Refusing to post the same payout twice. If you genuinely need to re-post, reverse the original first.`,
+                    duplicate_payout: true,
+                };
+            }
+            // else: orphaned — allow the re-import. The route layer should also
+            // have surfaced the orphan banner so the user knows this is post-restore.
         }
     }
     const validatedPayments = [];

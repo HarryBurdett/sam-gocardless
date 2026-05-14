@@ -32,7 +32,7 @@ import {
   isGocardlessPayoutImported,
   isGocardlessReferenceImported,
 } from './import-history.js';
-import { checkOrphanedImports } from './restore-recovery.js';
+import { checkOrphanedImports, type OrphanedImport } from './restore-recovery.js';
 import {
   matchPaymentsHelper,
   type PaymentInput,
@@ -293,19 +293,47 @@ export async function fetchGocardlessApiPayouts(
     included: 0,
   };
 
+  // === ORPHAN-AWARE HISTORY DEDUP ===
+  // After an Opera SQL restore, the gocardless_imports table can record
+  // payouts as "imported" whose underlying Opera entry has been wiped.
+  // The plain history check at step 2 below would silently drop those
+  // payouts from the result — the operator then can't find the batch
+  // to re-import even though Opera no longer has it.
+  //
+  // Pre-compute the set of orphaned references so step 2 can SKIP them
+  // (i.e. behave as if the row weren't in history). The downstream
+  // Opera duplicate-check (step 4, `findOperaByReference`) becomes the
+  // authoritative gate — same path as a clean first-time fetch.
+  const orphanResult = await checkOrphanedImports(operaDb, appDb).catch(() => ({
+    success: false,
+    orphans: [] as OrphanedImport[],
+    count: 0,
+  }));
+  const orphanPayoutIds = new Set<string>();
+  const orphanReferences = new Set<string>();
+  for (const o of orphanResult.orphans ?? []) {
+    if (o.payout_id) orphanPayoutIds.add(o.payout_id);
+    if (o.bank_reference) orphanReferences.add(o.bank_reference);
+  }
+
   // === EARLY FILTERING ===
   // History dedup + company-reference prefix check, before any
   // expensive get_payout_with_payments() calls.
   const payoutsToFetch: RawPayout[] = [];
   for (const payout of rawPayouts) {
-    // History dedup — by payout_id or by reference
+    // History dedup — by payout_id or by reference, but SKIP this drop
+    // if the row is orphaned (Opera no longer has the entry).
     try {
-      if (await isGocardlessPayoutImported(appDb, payout.id, targetSystem)) {
+      if (
+        !orphanPayoutIds.has(payout.id) &&
+        (await isGocardlessPayoutImported(appDb, payout.id, targetSystem))
+      ) {
         filterStats.filtered_already_in_history += 1;
         continue;
       }
       if (
         payout.reference &&
+        !orphanReferences.has(payout.reference) &&
         (await isGocardlessReferenceImported(
           appDb,
           payout.reference,
@@ -537,28 +565,19 @@ export async function fetchGocardlessApiPayouts(
     }
   }
 
-  // Surface any orphaned `gocardless_imports` rows so the UI can show
-  // a restore-detected banner without needing a separate call.
-  let orphanCheck: FetchApiPayoutsResponse['orphan_check'] = {
-    detected: false,
-    count: 0,
-    summary: [],
-  };
-  try {
-    const result = await checkOrphanedImports(operaDb, appDb);
-    if (result.success && result.orphans.length > 0) {
-      orphanCheck = {
-        detected: true,
-        count: result.orphans.length,
-        summary: result.orphans.slice(0, 10).map((o) => ({
-          bank_reference: o.bank_reference,
-          gross_amount: o.gross_amount,
-        })),
-      };
-    }
-  } catch {
-    // best-effort — never block the payouts response on orphan check
-  }
+  // Reuse the orphan-check result from the early-filter pass so the UI
+  // can render a restore-detected banner. Single Opera lookup per call.
+  const orphanCheck: FetchApiPayoutsResponse['orphan_check'] =
+    orphanResult.success && (orphanResult.orphans?.length ?? 0) > 0
+      ? {
+          detected: true,
+          count: orphanResult.orphans.length,
+          summary: orphanResult.orphans.slice(0, 10).map((o) => ({
+            bank_reference: o.bank_reference,
+            gross_amount: o.gross_amount,
+          })),
+        }
+      : { detected: false, count: 0, summary: [] };
 
   return {
     success: true,

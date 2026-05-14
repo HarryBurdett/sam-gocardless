@@ -43,10 +43,26 @@ function rowToOrphan(r) {
  * Opera, then diff in memory.
  */
 async function detectOrphans(operaDb, appDb) {
+    // Only rows that ACTUALLY claim to have posted to Opera are candidates
+    // for orphan detection. Skipped payouts (foreign-currency, manual-skip,
+    // duplicate-skip) use imported_by markers like 'MANUAL-EUR' / 'MANUAL-SKIP'
+    // / 'MANUAL-DUP' — these were never intended to be in Opera and must not
+    // be flagged as orphans.
+    //
+    // NB: real imports populate `batch_ref` (the cashbook entry number, e.g.
+    // 'R100001340') but leave `opera_entry_refs` empty. Earlier filter logic
+    // that required opera_entry_refs to be populated excluded ALL real
+    // imports — including genuine post-restore orphans. The correct claim
+    // signal is the `imported_by` marker (real imports use 'GOCARDLS',
+    // 'EMAIL', etc.; skips use 'MANUAL-*').
     const imports = (await appDb('gocardless_imports')
         .select('id', 'payout_id', 'bank_reference', 'gross_amount', 'net_amount', 'imported_at', 'post_date')
         .whereNotNull('bank_reference')
-        .andWhereRaw("TRIM(bank_reference) <> ''"));
+        .andWhereRaw("TRIM(bank_reference) <> ''")
+        .andWhere(function notManual() {
+        this.whereNull('imported_by')
+            .orWhereRaw("imported_by NOT LIKE 'MANUAL-%'");
+    }));
     if (!imports.length)
         return [];
     // Build unique-suffix set for the Opera batch lookup
