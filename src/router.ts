@@ -351,6 +351,99 @@ export function createRouter(ctx: AppContext): Router {
   });
 
   /**
+   * GET /api/bank-import/accounts/customers
+   *
+   * Active Opera customer accounts (sname) for the import-batch
+   * Opera-Account dropdown in GoCardlessImport.tsx. Faithful port of
+   * the bank-reconcile plugin's `getCustomersForDropdown` — the
+   * gocardless FE calls this endpoint directly (it lived in the
+   * legacy single-process backend; under SAM each plugin needs its
+   * own copy because dispatcher routes are plugin-scoped).
+   *
+   * Filters dormant + stopped per CLAUDE.md ("cannot post to dormant
+   * accounts"). Returns shape { success, count, accounts: [{code,
+   * name, search_key, display}] } — the GoCardless FE only reads
+   * code + name but we ship the full shape for parity.
+   */
+  router.get('/api/bank-import/accounts/customers', async (req: Request, res: Response) => {
+    const operaDb = getOperaDb(req, res);
+    if (!operaDb) return;
+    try {
+      const rows = (await operaDb.raw(`
+        SELECT
+          RTRIM(sn_account) AS code,
+          RTRIM(sn_name) AS name,
+          RTRIM(ISNULL(sn_key1, '')) AS search_key
+        FROM sname WITH (NOLOCK)
+        WHERE (sn_stop = 0 OR sn_stop IS NULL)
+          AND (sn_dormant = 0 OR sn_dormant IS NULL)
+        ORDER BY sn_account
+      `)) as unknown as Array<{
+        code: string | null;
+        name: string | null;
+        search_key: string | null;
+      }>;
+      const accounts = (Array.isArray(rows) ? rows : []).map((r) => ({
+        code: (r.code ?? '').trim(),
+        name: (r.name ?? '').trim(),
+        search_key: (r.search_key ?? '').trim(),
+        display: `${(r.code ?? '').trim()} - ${(r.name ?? '').trim()}`,
+      }));
+      res.json({ success: true, count: accounts.length, accounts });
+    } catch (err: any) {
+      ctx.logger.error('Customers dropdown failed', err);
+      res.json({
+        success: false,
+        count: 0,
+        accounts: [],
+        error: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
+   * GET /api/bank-import/accounts/suppliers
+   *
+   * Active Opera supplier accounts (pname) for the dropdown. Same
+   * shape + filter as customers above — dormant + stopped excluded.
+   */
+  router.get('/api/bank-import/accounts/suppliers', async (req: Request, res: Response) => {
+    const operaDb = getOperaDb(req, res);
+    if (!operaDb) return;
+    try {
+      const rows = (await operaDb.raw(`
+        SELECT
+          RTRIM(pn_account) AS code,
+          RTRIM(pn_name) AS name,
+          RTRIM(ISNULL(pn_payee, '')) AS payee
+        FROM pname WITH (NOLOCK)
+        WHERE (pn_stop = 0 OR pn_stop IS NULL)
+          AND (pn_dormant = 0 OR pn_dormant IS NULL)
+        ORDER BY pn_account
+      `)) as unknown as Array<{
+        code: string | null;
+        name: string | null;
+        payee: string | null;
+      }>;
+      const accounts = (Array.isArray(rows) ? rows : []).map((r) => ({
+        code: (r.code ?? '').trim(),
+        name: (r.name ?? '').trim(),
+        payee: (r.payee ?? '').trim(),
+        display: `${(r.code ?? '').trim()} - ${(r.name ?? '').trim()}`,
+      }));
+      res.json({ success: true, count: accounts.length, accounts });
+    } catch (err: any) {
+      ctx.logger.error('Suppliers dropdown failed', err);
+      res.json({
+        success: false,
+        count: 0,
+        accounts: [],
+        error: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
    * GET /api/gocardless/payment-types
    *
    * Returns nominal payment types (atype where ay_type='P' AND not batched).
