@@ -1,3 +1,24 @@
+/**
+ * Filter that excludes rows representing the operator's manual
+ * "don't import" decisions:
+ *   - MANUAL-EUR  / MANUAL-SKIP / MANUAL-DUP  (skipped at scan time)
+ *   - ARCHIVE                                 (archived email, never an Opera entry)
+ *
+ * These rows live in gocardless_imports but were never posted to
+ * Opera. Treating them as "imported" blocks the operator from
+ * changing their mind later — particularly painful after an Opera
+ * restore where they want a clean slate. Audit 2026-05-15 CRITICAL.
+ */
+function excludeNonImported(q) {
+    return q
+        .andWhere(function notManual() {
+        this.whereNull('imported_by')
+            .orWhereRaw("imported_by NOT LIKE 'MANUAL-%'");
+    })
+        .andWhere(function notArchive() {
+        this.whereNull('imported_by').orWhereRaw("imported_by <> 'ARCHIVE'");
+    });
+}
 export async function isPayoutImported(appDb, payoutId, opts = {}) {
     const id = (payoutId ?? '').trim();
     if (!id)
@@ -7,6 +28,7 @@ export async function isPayoutImported(appDb, payoutId, opts = {}) {
         if (opts.targetSystem) {
             q = q.andWhere({ target_system: opts.targetSystem });
         }
+        q = excludeNonImported(q);
         const row = (await q.first());
         return !!row;
     }
@@ -27,6 +49,7 @@ export async function isReferenceImported(appDb, bankReference, opts = {}) {
         if (opts.targetSystem) {
             q = q.andWhere({ target_system: opts.targetSystem });
         }
+        q = excludeNonImported(q);
         const row = (await q.first());
         return !!row;
     }

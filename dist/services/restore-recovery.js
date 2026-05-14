@@ -59,9 +59,17 @@ async function detectOrphans(operaDb, appDb) {
         .select('id', 'payout_id', 'bank_reference', 'gross_amount', 'net_amount', 'imported_at', 'post_date')
         .whereNotNull('bank_reference')
         .andWhereRaw("TRIM(bank_reference) <> ''")
+        // Exclude rows that aren't supposed to have a corresponding
+        // Opera entry: MANUAL-* (operator chose to skip) and ARCHIVE
+        // (the email was archived without ever being posted). Without
+        // the ARCHIVE filter the Recover button wipes the operator's
+        // archive history. Audit 2026-05-15 CRITICAL.
         .andWhere(function notManual() {
         this.whereNull('imported_by')
             .orWhereRaw("imported_by NOT LIKE 'MANUAL-%'");
+    })
+        .andWhere(function notArchive() {
+        this.whereNull('imported_by').orWhereRaw("imported_by <> 'ARCHIVE'");
     }));
     if (!imports.length)
         return [];

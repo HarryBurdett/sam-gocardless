@@ -275,42 +275,60 @@ export async function validateImportRequest(operaDb, appDb, input, settings, kno
     };
 }
 async function recordImportHistory(appDb, args) {
-    try {
-        await appDb('gocardless_imports').insert({
-            target_system: 'opera_se',
-            payout_id: args.payoutId,
-            source: args.source,
-            bank_reference: args.bankReference,
-            gross_amount: args.grossAmount,
-            net_amount: args.netAmount,
-            // SAM schema column is `fees_amount` (per migration 001); the
-            // legacy column name was `gocardless_fees`. Use the SAM name —
-            // an earlier version of this insert silently failed on every
-            // GoCardless import because SQLite/MSSQL rejected the unknown
-            // column and the try/catch swallowed it. That left
-            // gocardless_imports empty and the idempotency gate inert.
-            fees_amount: args.goCardlessFees,
-            vat_on_fees: args.vatOnFees,
-            payment_count: args.paymentCount,
-            payments_json: args.paymentsJson,
-            batch_ref: args.batchRef,
-            imported_by: args.importedBy,
-            post_date: args.postDate,
-            // payment_date drives the bank-code + date index used by the
-            // history list endpoint; legacy set it from post_date.
-            payment_date: args.postDate,
-            email_id: args.emailId ?? null,
-            imported_at: appDb.fn.now(),
-        });
+    // Retry the insert up to 3 times with backoff. If it ultimately
+    // fails, THROW — the caller surfaces an "import committed to Opera
+    // but audit row failed — manual reconciliation required" error
+    // back to the operator. We CANNOT silently swallow because
+    // gocardless_imports IS the idempotency gate; if the row is
+    // missing, the next `isPayoutImported(payout_id)` call returns
+    // false and the whole batch re-posts to Opera. Audit 2026-05-15.
+    const insertRow = {
+        target_system: 'opera_se',
+        payout_id: args.payoutId,
+        source: args.source,
+        bank_reference: args.bankReference,
+        gross_amount: args.grossAmount,
+        net_amount: args.netAmount,
+        // SAM schema column is `fees_amount` (per migration 001); the
+        // legacy column name was `gocardless_fees`. Use the SAM name —
+        // an earlier version of this insert silently failed on every
+        // GoCardless import because SQLite/MSSQL rejected the unknown
+        // column and the try/catch swallowed it. That left
+        // gocardless_imports empty and the idempotency gate inert.
+        fees_amount: args.goCardlessFees,
+        vat_on_fees: args.vatOnFees,
+        payment_count: args.paymentCount,
+        payments_json: args.paymentsJson,
+        batch_ref: args.batchRef,
+        imported_by: args.importedBy,
+        post_date: args.postDate,
+        // payment_date drives the bank-code + date index used by the
+        // history list endpoint; legacy set it from post_date.
+        payment_date: args.postDate,
+        email_id: args.emailId ?? null,
+        imported_at: appDb.fn.now(),
+    };
+    const backoffsMs = [0, 100, 500, 1500];
+    let lastErr = null;
+    for (let attempt = 0; attempt < backoffsMs.length; attempt += 1) {
+        if (backoffsMs[attempt] > 0) {
+            await new Promise((r) => setTimeout(r, backoffsMs[attempt]));
+        }
+        try {
+            await appDb('gocardless_imports').insert(insertRow);
+            if (attempt > 0) {
+                // eslint-disable-next-line no-console
+                console.warn(`[gocardless] recordImportHistory succeeded on attempt ${attempt + 1} for payout ${args.payoutId}`);
+            }
+            return;
+        }
+        catch (err) {
+            lastErr = err;
+            // eslint-disable-next-line no-console
+            console.warn(`[gocardless] recordImportHistory attempt ${attempt + 1} failed for payout ${args.payoutId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
-    catch (err) {
-        // History write failure is non-fatal at the import level (Python
-        // logs warning then proceeds), but we DO surface the error so it
-        // can be picked up in logs rather than silently dropping every
-        // import row like the previous version did.
-        // eslint-disable-next-line no-console
-        console.warn(`[gocardless] recordImportHistory failed for payout ${args.payoutId}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    throw new Error(`Opera batch committed for payout ${args.payoutId} but audit row write to gocardless_imports failed after ${backoffsMs.length} attempts. Manual reconciliation REQUIRED — the next attempt to import this payout will silently double-post unless the audit row is added by hand. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 export async function importGocardlessBatch(operaDb, appDb, input, settings, knownMandates, executor, importLock) {
     const validation = await validateImportRequest(operaDb, appDb, input, settings, knownMandates);
@@ -343,28 +361,40 @@ export async function importGocardlessBatch(operaDb, appDb, input, settings, kno
         }
         const grossAmount = request.payments.reduce((acc, p) => acc + p.amount, 0);
         const netAmount = grossAmount - request.goCardlessFees;
-        await recordImportHistory(appDb, {
-            payoutId: request.payoutId,
-            source: request.source,
-            bankReference: request.reference,
-            grossAmount,
-            netAmount,
-            goCardlessFees: request.goCardlessFees,
-            vatOnFees: request.vatOnFees,
-            paymentCount: request.payments.length,
-            paymentsJson: JSON.stringify(request.payments.map((p) => ({
-                customer_account: p.customer_account,
-                gc_customer_name: p.customer_name,
-                opera_customer_name: p.opera_customer_name,
-                amount: p.amount,
-                description: p.description,
-            }))),
-            batchRef: result.batch_ref ?? null,
-            // Thread the validated operator code through audit history.
-            importedBy: request.inputBy || 'GOCARDLS',
-            postDate: request.postDateString,
-            emailId: request.emailId,
-        });
+        try {
+            await recordImportHistory(appDb, {
+                payoutId: request.payoutId,
+                source: request.source,
+                bankReference: request.reference,
+                grossAmount,
+                netAmount,
+                goCardlessFees: request.goCardlessFees,
+                vatOnFees: request.vatOnFees,
+                paymentCount: request.payments.length,
+                paymentsJson: JSON.stringify(request.payments.map((p) => ({
+                    customer_account: p.customer_account,
+                    gc_customer_name: p.customer_name,
+                    opera_customer_name: p.opera_customer_name,
+                    amount: p.amount,
+                    description: p.description,
+                }))),
+                batchRef: result.batch_ref ?? null,
+                // Thread the validated operator code through audit history.
+                importedBy: request.inputBy || 'GOCARDLS',
+                postDate: request.postDateString,
+                emailId: request.emailId,
+            });
+        }
+        catch (auditErr) {
+            // Opera batch already committed — the audit row failed to
+            // write. Return a structured failure so the operator can
+            // see the explicit instruction. The Opera entries ARE in
+            // place; only the SAM idempotency gate is missing.
+            return {
+                success: false,
+                error: `Opera batch posted but SAM audit row failed. ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
+            };
+        }
         return {
             success: true,
             message: `Successfully imported ${request.payments.length} payments`,

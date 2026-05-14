@@ -18,6 +18,28 @@ export interface IdempotencyOptions {
   targetSystem?: string | null;
 }
 
+/**
+ * Filter that excludes rows representing the operator's manual
+ * "don't import" decisions:
+ *   - MANUAL-EUR  / MANUAL-SKIP / MANUAL-DUP  (skipped at scan time)
+ *   - ARCHIVE                                 (archived email, never an Opera entry)
+ *
+ * These rows live in gocardless_imports but were never posted to
+ * Opera. Treating them as "imported" blocks the operator from
+ * changing their mind later — particularly painful after an Opera
+ * restore where they want a clean slate. Audit 2026-05-15 CRITICAL.
+ */
+function excludeNonImported(q: Knex.QueryBuilder): Knex.QueryBuilder {
+  return q
+    .andWhere(function notManual(this: Knex.QueryBuilder) {
+      this.whereNull('imported_by')
+        .orWhereRaw("imported_by NOT LIKE 'MANUAL-%'");
+    })
+    .andWhere(function notArchive(this: Knex.QueryBuilder) {
+      this.whereNull('imported_by').orWhereRaw("imported_by <> 'ARCHIVE'");
+    });
+}
+
 export async function isPayoutImported(
   appDb: Knex,
   payoutId: string,
@@ -30,6 +52,7 @@ export async function isPayoutImported(
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }
+    q = excludeNonImported(q);
     const row = (await q.first()) as { id: number } | undefined;
     return !!row;
   } catch {
@@ -57,6 +80,7 @@ export async function isReferenceImported(
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }
+    q = excludeNonImported(q);
     const row = (await q.first()) as { id: number } | undefined;
     return !!row;
   } catch {
