@@ -1,13 +1,3 @@
-/**
- * Minimal GoCardless REST API client.
- *
- * Faithful port of the bits of `sql_rag/gocardless_api.py` we need
- * for test-api. Other client methods (get_payouts, create_payment,
- * etc.) ported as needed in subsequent sessions.
- *
- * Uses native fetch (Node 18+) to avoid the axios dependency in the
- * Python version.
- */
 export interface GoCardlessClientOptions {
     accessToken: string;
     sandbox?: boolean;

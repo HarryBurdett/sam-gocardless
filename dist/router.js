@@ -5,6 +5,7 @@
  * the Python implementation — see docs/sam-rewrite/progress.md.
  */
 import { Router } from 'express';
+import { friendlyDbError } from './_shared/index.js';
 import { loadSettings, saveSettings, maskSettingsForResponse, mergeSettingsUpdate, } from './services/settings.js';
 import { runHealthCheck } from './services/health-check.js';
 import { getBatchTypes, getNominalAccounts, getPaymentTypes, getVatCodes, getBankAccounts, getImportConfig, getSetupStatus, } from './services/lookups.js';
@@ -138,7 +139,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Failed to load GoCardless settings', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -166,7 +167,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Failed to save GoCardless settings', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -199,7 +200,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('GoCardless health-check failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -215,7 +216,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Setup status failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -235,7 +236,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Batch types fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -254,7 +255,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Nominal accounts fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -301,7 +302,7 @@ export function createRouter(ctx) {
                 success: false,
                 count: 0,
                 accounts: [],
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -340,7 +341,7 @@ export function createRouter(ctx) {
                 success: false,
                 count: 0,
                 accounts: [],
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -359,7 +360,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Payment types fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -379,7 +380,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('VAT codes fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -397,7 +398,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Bank accounts fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -418,7 +419,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Import config fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -452,7 +453,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Import history fetch failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -483,7 +484,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Skip payout failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -508,7 +509,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('GoCardless test-api failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -544,7 +545,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Archive email failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -655,7 +656,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('GoCardless api-payouts failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -689,7 +690,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Receipt search failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -714,7 +715,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('GoCardless orphan check failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -737,7 +738,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('GoCardless recover-from-restore failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -759,7 +760,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Clear import history failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -788,7 +789,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Delete import record failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -836,7 +837,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Match customers failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -879,7 +880,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Revalidate batches failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -905,7 +906,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('List mandates failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -925,7 +926,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('List unlinked mandates failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1003,7 +1004,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Sync mandates failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1127,7 +1128,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Link mandate failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1186,7 +1187,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Eligible customers failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1261,10 +1262,14 @@ export function createRouter(ctx) {
                 amountPence: input2.amountPence,
                 mandateId: input2.mandateId,
                 description: input2.description,
+                reference: input2.reference ?? null,
                 chargeDate: input2.chargeDate,
                 metadata: input2.metadata,
             });
-            const result = await requestPayment(appDb, input, { request_statement_reference: settings.request_statement_reference ?? '' }, readOpera, createRemote);
+            const result = await requestPayment(appDb, input, {
+                request_statement_reference: settings.request_statement_reference ?? '',
+                bacs_reference_template: settings.bacs_reference_template ?? '',
+            }, readOpera, createRemote);
             if (!result.success) {
                 res.status(400).json(result);
                 return;
@@ -1273,7 +1278,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Request payment failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1346,15 +1351,19 @@ export function createRouter(ctx) {
                 amountPence: input2.amountPence,
                 mandateId: input2.mandateId,
                 description: input2.description,
+                reference: input2.reference ?? null,
                 chargeDate: input2.chargeDate,
                 metadata: input2.metadata,
             });
-            const result = await requestBulkPayments(appDb, inputs, { request_statement_reference: settings.request_statement_reference ?? '' }, readOpera, createRemote);
+            const result = await requestBulkPayments(appDb, inputs, {
+                request_statement_reference: settings.request_statement_reference ?? '',
+                bacs_reference_template: settings.bacs_reference_template ?? '',
+            }, readOpera, createRemote);
             res.json(result);
         }
         catch (err) {
             ctx.logger.error('Request bulk payments failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1445,7 +1454,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get collectable invoices failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1493,7 +1502,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get due invoices failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     // Suppress unused-import warning when due-invoices types only flow through
@@ -1534,7 +1543,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get repeat documents failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1559,7 +1568,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get customer email failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1654,7 +1663,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Create mandate setup failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1783,7 +1792,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Check mandate setups failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1803,7 +1812,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('List mandate setups failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1830,7 +1839,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Cancel mandate setup failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1867,7 +1876,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Cancel mandate failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1895,7 +1904,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Unlink mandate failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1928,7 +1937,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('List subscriptions failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1963,7 +1972,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Link subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -1995,7 +2004,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Unlink subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2092,7 +2101,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Create subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2173,7 +2182,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Sync subscriptions failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2200,7 +2209,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2246,7 +2255,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Update subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2280,7 +2289,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Pause subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2314,7 +2323,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Resume subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2369,7 +2378,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Sync subscription from Opera failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2403,7 +2412,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Cancel subscription failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2429,7 +2438,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('List payment requests failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2462,7 +2471,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Sync payment statuses failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2489,7 +2498,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Get payment request failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2528,7 +2537,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Cancel payment request failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2550,7 +2559,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Payment stats failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2610,7 +2619,7 @@ export function createRouter(ctx) {
             res.status(500).json({
                 success: false,
                 valid: false,
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -2647,7 +2656,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Update subscription tags failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2680,7 +2689,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Initiate partner signup failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2719,7 +2728,7 @@ export function createRouter(ctx) {
             const html = partnerCallbackHtml({
                 ok: false,
                 title: 'Connection Failed',
-                message: `Something went wrong: ${err?.message ?? String(err)}`,
+                message: `Something went wrong: ${friendlyDbError(err)}`,
             });
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             res.status(500).send(html);
@@ -2747,7 +2756,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Partner config failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2766,7 +2775,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Partner signup-status failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2789,7 +2798,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Partner merchants failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2811,7 +2820,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Partner admin auth failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2832,7 +2841,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Partner admin-password failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2856,7 +2865,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Set merchant app URL failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2882,7 +2891,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Activate merchant failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2903,7 +2912,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('Deploy token failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -2952,7 +2961,7 @@ export function createRouter(ctx) {
             ctx.logger.error('parse-content failed', err);
             res
                 .status(500)
-                .json({ success: false, error: err?.message ?? String(err) });
+                .json({ success: false, error: friendlyDbError(err) });
         }
     });
     /**
@@ -3011,7 +3020,7 @@ export function createRouter(ctx) {
             ctx.logger.error('scan-emails failed', err);
             res.status(500).json({
                 success: false,
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -3095,7 +3104,7 @@ export function createRouter(ctx) {
             ctx.logger.error('gocardless/import failed', err);
             res.status(500).json({
                 success: false,
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -3168,7 +3177,7 @@ export function createRouter(ctx) {
             ctx.logger.error('gocardless/import-from-email failed', err);
             res.status(500).json({
                 success: false,
-                error: err?.message ?? String(err),
+                error: friendlyDbError(err),
             });
         }
     });
@@ -3230,7 +3239,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('ocr-path failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     router.post('/api/gocardless/ocr', async (_req, res) => {
@@ -3275,7 +3284,7 @@ export function createRouter(ctx) {
         }
         catch (err) {
             ctx.logger.error('parse failed', err);
-            res.status(500).json({ success: false, error: err?.message ?? String(err) });
+            res.status(500).json({ success: false, error: friendlyDbError(err) });
         }
     });
     return router;

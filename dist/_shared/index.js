@@ -11,4 +11,5 @@
 export * from './opera/index.js';
 export * from './posting/index.js';
 export { sequenceMatcherRatio } from './string/sequence-matcher.js';
+export { friendlyDbError } from './friendly-db-error.js';
 //# sourceMappingURL=index.js.map

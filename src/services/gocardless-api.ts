@@ -8,6 +8,7 @@
  * Uses native fetch (Node 18+) to avoid the axios dependency in the
  * Python version.
  */
+import { formatGoCardlessApiError } from './gocardless-api-errors.js';
 
 const SANDBOX_URL = 'https://api-sandbox.gocardless.com';
 const LIVE_URL = 'https://api.gocardless.com';
@@ -32,8 +33,20 @@ export class GoCardlessClient {
 
   constructor(opts: GoCardlessClientOptions) {
     this.accessToken = opts.accessToken;
-    this.environment = opts.sandbox ? 'sandbox' : 'live';
-    this.baseUrl = opts.sandbox ? SANDBOX_URL : LIVE_URL;
+    // Safe default: when `sandbox` is undefined (caller forgot to set
+    // it), assume sandbox — same default legacy uses since e59a228.
+    // ANY caller wanting live MUST pass sandbox=false explicitly.
+    // Then auto-detect from the token prefix if present (`sandbox_`
+    // / `live_` overrides the explicit flag), so an admin who
+    // pasted a live token but left the checkbox on sandbox still
+    // gets routed to live (and vice versa). Faithful port of
+    // cb29f62.
+    let sandbox = opts.sandbox === undefined ? true : !!opts.sandbox;
+    const tok = (this.accessToken ?? '').trim();
+    if (tok.startsWith('sandbox_')) sandbox = true;
+    else if (tok.startsWith('live_')) sandbox = false;
+    this.environment = sandbox ? 'sandbox' : 'live';
+    this.baseUrl = sandbox ? SANDBOX_URL : LIVE_URL;
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<Response> {
@@ -94,7 +107,7 @@ export class GoCardlessClient {
           success: false,
           payouts: [],
           before: null,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -143,7 +156,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as Record<string, unknown>;
@@ -191,7 +204,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as { payments?: Record<string, unknown> };
@@ -235,7 +248,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -294,7 +307,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -346,7 +359,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -401,7 +414,7 @@ export class GoCardlessClient {
           success: false,
           mandates: [],
           after: null,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -450,7 +463,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as { mandates?: Record<string, unknown> };
@@ -488,7 +501,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as { customers?: Record<string, unknown> };
@@ -593,7 +606,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as { payments?: Record<string, unknown> };
@@ -658,7 +671,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -715,7 +728,7 @@ export class GoCardlessClient {
           success: false,
           subscriptions: [],
           after: null,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -767,7 +780,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -826,7 +839,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -913,7 +926,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
         };
       }
       const data = (await res.json()) as {
@@ -949,7 +962,7 @@ export class GoCardlessClient {
         const text = await res.text().catch(() => '');
         return {
           success: false,
-          error: `GoCardless API returned ${res.status}: ${text.slice(0, 200)}`,
+          error: formatGoCardlessApiError(text, res.status),
           environment: this.environment,
         };
       }

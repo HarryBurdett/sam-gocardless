@@ -1,3 +1,20 @@
+/**
+ * Resolve a BACS reference template against per-payment values. Max
+ * 10 chars (BACS limit on what appears on the customer's bank
+ * statement). Unknown merge fields render empty. Length suffix
+ * `{field4}` takes the first 4 chars of `field`. Faithful port of
+ * the Python regex `\{(\w+?)(\d+)?\}` substitution in routes.py:5148.
+ */
+export function buildBacsReference(template, values) {
+    const t = (template ?? '').trim();
+    if (!t)
+        return values.company.slice(0, 10);
+    const rendered = t.replace(/\{(\w+?)(\d+)?\}/g, (_match, name, len) => {
+        const raw = values[name] ?? '';
+        return len ? raw.slice(0, Number(len)) : raw;
+    });
+    return rendered.trim().slice(0, 10);
+}
 function trim(s) {
     return (s ?? '').trim();
 }
@@ -173,11 +190,25 @@ export async function requestPayment(appDb, input, settings, readOpera, createRe
     // 6. Build description + sanitised charge_date
     const description = buildDescription(input.description, invoices, settings.request_statement_reference);
     const chargeDate = normaliseChargeDate(input.chargeDate ?? null, today);
+    // 6a. Build BACS reference from template — what appears on the
+    // customer's bank statement. Max 10 chars. Defaults to
+    // {company} so the request_statement_reference is used when no
+    // template is set. Faithful port of routes.py:5148 (23b9542 +
+    // 4bd437a).
+    const firstInvoice = invoices.length > 0 ? invoices[0] : '';
+    const invNumDigits = firstInvoice.replace(/\D/g, '');
+    const bacsReference = buildBacsReference(settings.bacs_reference_template ?? '{company}', {
+        company: trim(settings.request_statement_reference),
+        inv: firstInvoice,
+        inv_num: invNumDigits,
+        customer: operaAccount,
+    });
     // 7. Remote create
     const remote = await createRemote({
         amountPence,
         mandateId: mandate.mandate_id,
         description,
+        reference: bacsReference || null,
         chargeDate,
         metadata: {
             opera_account: operaAccount,

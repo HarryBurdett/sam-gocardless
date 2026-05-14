@@ -54,7 +54,26 @@ export interface RequestPaymentInput {
 export interface RequestPaymentSettings {
     /** Truncated to 10 chars. Prefixed onto descriptions for bank visibility. */
     request_statement_reference?: string | null;
+    /** BACS reference template — overrides request_statement_reference
+     *  for the customer-bank-statement reference field (GoCardless API
+     *  `payments.reference`). Supports merge fields {company}, {inv},
+     *  {inv_num}, {customer} plus length suffixes ({company4} etc.).
+     *  Faithful port of legacy 23b9542 + 4bd437a. */
+    bacs_reference_template?: string | null;
 }
+/**
+ * Resolve a BACS reference template against per-payment values. Max
+ * 10 chars (BACS limit on what appears on the customer's bank
+ * statement). Unknown merge fields render empty. Length suffix
+ * `{field4}` takes the first 4 chars of `field`. Faithful port of
+ * the Python regex `\{(\w+?)(\d+)?\}` substitution in routes.py:5148.
+ */
+export declare function buildBacsReference(template: string | null | undefined, values: {
+    company: string;
+    inv: string;
+    inv_num: string;
+    customer: string;
+}): string;
 export interface RequestPaymentResponse {
     success: boolean;
     message?: string;
@@ -71,6 +90,7 @@ export declare function requestPayment(appDb: Knex, input: RequestPaymentInput, 
     amountPence: number;
     mandateId: string;
     description: string;
+    reference?: string | null;
     chargeDate: string | null;
     metadata: Record<string, string>;
 }) => Promise<RemoteCreatePaymentResult>, today?: Date): Promise<RequestPaymentResponse>;

@@ -108,6 +108,7 @@ export function mergeSettingsUpdate(existing, body) {
         'partner_client_id',
         'partner_redirect_uri',
         'request_statement_reference',
+        'bacs_reference_template',
         'payout_lookback_days',
     ];
     for (const key of mergeableKeys) {

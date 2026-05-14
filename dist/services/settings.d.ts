@@ -34,6 +34,16 @@ export interface GoCardlessSettings {
     partner_redirect_uri?: string;
     partner_admin_password?: string;
     request_statement_reference?: string;
+    /** BACS reference template — what appears on the customer's bank
+     *  statement (max 10 chars). Supports merge fields:
+     *    {company}  → request_statement_reference (default)
+     *    {inv}      → invoice ref (e.g. INV26492)
+     *    {inv_num}  → invoice number digits only (e.g. 26492)
+     *    {customer} → Opera customer account (e.g. R019)
+     *  Plus length suffixes: {company4}, {inv_num5}, etc. take the
+     *  first N chars/digits. Faithful port of legacy 23b9542 + 4bd437a.
+     */
+    bacs_reference_template?: string;
     payout_lookback_days?: number;
 }
 /**
