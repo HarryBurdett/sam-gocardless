@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CreditCard, ArrowRight, CheckCircle, Loader2, ExternalLink, Settings } from 'lucide-react';
 import { authFetch } from './api-shim';
+import { LIVE_VERSION } from './PageHeader';
 
 // SAM port — react-router-dom isn't loaded in SAM plugins. The wizard
 // uses navigate() to redirect on completion; in SAM the host owns
@@ -92,7 +93,12 @@ export function GoCardlessSetupWizard() {
         <div className="inline-flex p-4 rounded-2xl bg-emerald-50 mb-4">
           <CreditCard className="h-10 w-10 text-emerald-500" />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900">Crakd.ai DD</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Crakd.ai DD
+          <span className="ml-2 text-xs font-medium text-gray-400">
+            Live Version {LIVE_VERSION}
+          </span>
+        </h1>
         <p className="text-sm text-gray-500 mt-1">Direct Debit Management powered by GoCardless</p>
       </div>
 
