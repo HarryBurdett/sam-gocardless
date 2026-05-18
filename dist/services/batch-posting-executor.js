@@ -1558,19 +1558,32 @@ export const gocardlessBatchPostingExecutor = {
                         label: 'transfer-in line',
                     });
                     // sharedUnique now keys the anoml pair (ax_unique). ntran
-                    // legs use DISTINCT pstids per leg (BLOCKER #6), so we check
-                    // them as two singleton rows rather than one balanced pair.
+                    // legs use DISTINCT pstids per leg (BLOCKER #6), so the
+                    // pair balances CROSS-pstid (source leg + dest leg = 0)
+                    // not within each pstid individually. assertBalancedPairsBulk
+                    // checks per-unique sum=0, which can never hold for a single
+                    // non-zero row, so we issue a one-shot cross-pstid sum here
+                    // instead.
                     if (transferResult.ntranWritten) {
-                        await assertBalancedPairsBulk(trx, {
-                            table: 'ntran',
-                            sharedUniques: [
-                                transferResult.ntranPstidSource,
-                                transferResult.ntranPstidDest,
-                            ],
-                            expectedRowsPerUnique: 1,
-                            batchRef: transferResult.sourceEntry,
-                            label: 'transfer ntran',
-                        });
+                        const rows = (await trx.raw(`SELECT COUNT(*) AS cnt, SUM(nt_value) AS total
+               FROM ntran WITH (NOLOCK)
+               WHERE RTRIM(nt_pstid) IN (?, ?)`, [
+                            transferResult.ntranPstidSource,
+                            transferResult.ntranPstidDest,
+                        ]));
+                        const row = Array.isArray(rows)
+                            ? rows[0]
+                            : rows.recordset?.[0];
+                        const cnt = Number(row?.cnt ?? 0);
+                        const total = Number(row?.total ?? NaN);
+                        if (cnt !== 2) {
+                            throw new PostingVerificationError(`transfer ntran rows missing (expected 2 across pstids ` +
+                                `${transferResult.ntranPstidSource}/${transferResult.ntranPstidDest}): got ${cnt}`, { batchRef: transferResult.sourceEntry, phase: 'in-trx' });
+                        }
+                        if (!Number.isFinite(total) || Math.abs(total) > 0.005) {
+                            throw new PostingVerificationError(`transfer ntran does not balance across pstids ` +
+                                `${transferResult.ntranPstidSource}/${transferResult.ntranPstidDest}: sum=${total}`, { batchRef: transferResult.sourceEntry, phase: 'in-trx' });
+                        }
                     }
                     if (decision.postToTransferFile) {
                         await assertBalancedPairsBulk(trx, {
