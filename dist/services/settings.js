@@ -7,7 +7,7 @@ const DEFAULTS = {
     company_reference: '',
     exclude_description_patterns: [],
     auto_allocate: false,
-    gocardless_bank_code: process.env.GOCARDLESS_BANK_CODE ?? '',
+    gocardless_bank_code: '',
     gocardless_transfer_cbtype: '',
     subscription_tag: 'SUB',
     subscription_frequencies: ['W', 'M', 'A'],
