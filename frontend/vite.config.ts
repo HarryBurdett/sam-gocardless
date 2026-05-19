@@ -1,38 +1,22 @@
 /**
- * Vite config for the GoCardless plugin frontend.
+ * Vite SPA build for the gocardless SAM plugin.
  *
- * Produces a UMD bundle that registers the entry component on
- * `window.__SAM_APPS__['gocardless']`. SAM's AppLoader (in
- * `packages/frontend/src/plugins/AppLoader.tsx`) injects a `<script>`
- * pointing at /api/apps/gocardless/static/index.js — that's the file
- * this build produces.
+ * SAM mounts each plugin in an iframe at /apps/<appId>/ — see
+ * packages/portal/src/components/apps/AppIframe.tsx and the backend's
+ * static handler in packages/backend/src/index.ts:157-177. It serves
+ * `frontend-dist/index.html` and the hashed assets under
+ * `frontend-dist/assets/*`.
  *
- * React + ReactDOM are externals: the SAM host page already provides
- * them on `window.__SAM_SHARED__`. We don't bundle a second copy.
+ * `base: './'` makes generated asset references relative so they resolve
+ * correctly when served at any path (e.g. `/apps/gocardless/`).
  */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   build: {
-    lib: {
-      entry: resolve(__dirname, 'src/index.tsx'),
-      name: 'GoCardlessApp',
-      formats: ['umd'],
-      fileName: () => 'index.js',
-    },
-    rollupOptions: {
-      external: ['react', 'react-dom'],
-      output: {
-        globals: {
-          react: '__SAM_SHARED__.react',
-          'react-dom': '__SAM_SHARED__.reactDom',
-        },
-      },
-    },
-    cssCodeSplit: false,
     sourcemap: true,
     minify: 'esbuild',
   },
