@@ -260,12 +260,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
         : Array.isArray(rows.recordset)
           ? rows.recordset
           : [];
-      res.json({ accounts: list });
+      res.json({ success: true, accounts: list });
     } catch (err) {
       consoleLogger.warn(
         `[${code}] /api/bank-import/accounts/customers failed: ${(err as Error).message}`,
       );
-      res.status(500).json({ error: (err as Error).message, accounts: [] });
+      res.status(500).json({ success: false, error: (err as Error).message, accounts: [] });
     }
   });
 
