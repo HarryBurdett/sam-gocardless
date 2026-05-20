@@ -319,17 +319,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     res.json({ ok: true, opera_database: payload.database, opera_version: payload.operaVersion ?? null });
   });
 
-  // Frontend static bundle.
-  app.use(
-    '/api/apps/gocardless/static',
-    express.static(FRONTEND_DIST),
-  );
-
   // Dispatcher: forward /api/apps/gocardless/* to the per-company router.
+  // Mounted BEFORE the SPA static handler so API routes take priority.
   app.use('/api/apps/gocardless', makeDispatcher(companies));
 
-  // App shell + any other authenticated static assets.
-  app.use(express.static(PUBLIC_DIR));
+  // Frontend SPA. The plugin's frontend is now a Vite SPA (commit
+  // 5653a1d "convert to Vite SPA build for SAM iframe-mode"), not a
+  // UMD bundle. We serve `frontend/dist/` at root: index.html at /,
+  // hashed JS/CSS at /assets/*. The SPA's index.tsx falls back to
+  // cookie-auth + same-origin /api/apps/<appId>/... calls when
+  // window.__SAM_CONTEXT__ is absent, which matches our setup exactly.
+  app.use(express.static(FRONTEND_DIST));
 
   // Catch-all error handler.
   app.use(
