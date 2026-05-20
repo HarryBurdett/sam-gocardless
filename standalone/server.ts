@@ -228,6 +228,47 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     });
   });
 
+  // SPA-fallback compatibility endpoint — the GoCardless wizard's
+  // customer-dropdown loader hits `/api/bank-import/accounts/customers`
+  // (the bank-reconcile plugin's customer list in SAM). In standalone
+  // we don't host bank-reconcile, so we serve an equivalent directly
+  // from Opera's sname table to keep the dropdown population working.
+  // Without this, matched_account values like "I038" arrive from the
+  // matcher but the UI has no customer list to render them against
+  // and the dropdown appears empty.
+  app.get('/api/bank-import/accounts/customers', async (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session', accounts: [] });
+      return;
+    }
+    const operaDb = operaAdapter.getCompanyDb(code);
+    if (!operaDb) {
+      res.json({ accounts: [], note: 'Opera connection not available for this company.' });
+      return;
+    }
+    try {
+      const rows = (await operaDb.raw(
+        `SELECT RTRIM(sn_account) AS code, RTRIM(sn_name) AS name
+         FROM sname WITH (NOLOCK)
+         WHERE (sn_dormant = 0 OR sn_dormant IS NULL)
+           AND LTRIM(RTRIM(sn_account)) <> ''
+         ORDER BY sn_name`,
+      )) as Array<{ code: string; name: string }> | { recordset?: Array<{ code: string; name: string }> };
+      const list = Array.isArray(rows)
+        ? rows
+        : Array.isArray(rows.recordset)
+          ? rows.recordset
+          : [];
+      res.json({ accounts: list });
+    } catch (err) {
+      consoleLogger.warn(
+        `[${code}] /api/bank-import/accounts/customers failed: ${(err as Error).message}`,
+      );
+      res.status(500).json({ error: (err as Error).message, accounts: [] });
+    }
+  });
+
   // Live customer search against Opera's sname table for the
   // session-selected company. The Requests page's "match customer"
   // dropdown calls this. Lives at the host layer (not the plugin
@@ -322,6 +363,24 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // Dispatcher: forward /api/apps/gocardless/* to the per-company router.
   // Mounted BEFORE the SPA static handler so API routes take priority.
   app.use('/api/apps/gocardless', makeDispatcher(companies));
+
+  // SPA-fallback compatibility mount. The plugin's frontend (post-SPA
+  // conversion in 5653a1d) uses a buildFallbackApi() that fires calls
+  // starting with `/api/...` directly at the host root — the
+  // assumption being SAM-iframe-mode where SAM's backend path-rewrites
+  // them into the plugin. In standalone the dispatcher is at
+  // /api/apps/gocardless, so we need to re-prefix and forward.
+  // The plugin's routes live under /api/gocardless/* and
+  // /api/opera3/* (the Opera-3 mirror) — both are caught here.
+  const dispatcher = makeDispatcher(companies);
+  app.use(['/api/gocardless', '/api/opera3'], (req: Request, res: Response, next: NextFunction) => {
+    // Express stripped the mount prefix (e.g. '/api/gocardless') from
+    // req.url. The plugin's route table still expects the full
+    // /api/gocardless/... path, so we put it back before forwarding.
+    const mountPath = req.baseUrl; // e.g. '/api/gocardless'
+    req.url = mountPath + req.url;
+    dispatcher(req, res, next);
+  });
 
   // Frontend SPA. The plugin's frontend is now a Vite SPA (commit
   // 5653a1d "convert to Vite SPA build for SAM iframe-mode"), not a
