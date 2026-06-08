@@ -723,13 +723,21 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
   // below will turn that into a clean operator-actionable error
   // (rather than silently dropping the VAT leg the way the legacy
   // Python did — see Bug 1 in the 2026-06-05 audit memo).
+  //
+  // Captures BOTH nominal_account (for the VAT leg destination) and
+  // rate (for the nvat VAT-tracking row). The rate is used purely for
+  // VAT-return reporting; the VAT amount itself comes from args.
   let vatNominalAccount = '';
+  let vatRate = 0;
   if (vatAmount > 0) {
     try {
       const refDate = new Date(args.postDate);
       const vatCodes = await fetchVatCodesWithRates(trx, refDate);
       const code = vatCodes.vatCodes.find((v) => v.code === args.feesVatCode);
-      if (code) vatNominalAccount = code.nominal_account;
+      if (code) {
+        vatNominalAccount = code.nominal_account;
+        vatRate = code.rate;
+      }
     } catch {
       // proceed without VAT nominal — assert below will refuse the post
     }
@@ -1018,6 +1026,46 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         vatNominalAccount,
         feesVatUnique,
         args.reference.slice(0, 20),
+        args.now.iso,
+        args.now.iso,
+      ],
+    );
+
+    // nvat — VAT-return tracking row. Without this, fees VAT input is
+    // invisible to Opera's VAT return report and operators would
+    // under-claim recoverable VAT. Pattern + column layout copied
+    // verbatim from bank-rec's import-posting-executor.ts:1806-1835
+    // (which itself faithfully ports opera_sql_import.py:6347-6383).
+    //
+    // ERROR from 2026-06-08 snapshot-vs-code audit — gocardless's
+    // omission of this write was previously undetected because
+    // hasVatLine was almost always false (see Bug 1, fix dea521e).
+    const nvatRowId = await getNextId(trx, 'nvat');
+    const nvatComment = 'GoCardless fees VAT'.slice(0, 40);
+    await trx.raw(
+      `INSERT INTO nvat (
+        id, nv_acnt, nv_cntr, nv_date, nv_crdate, nv_taxdate,
+        nv_ref, nv_type, nv_advance, nv_value, nv_vatval,
+        nv_vatctry, nv_vattype, nv_vatcode, nv_vatrate, nv_comment,
+        datecreated, datemodified, state
+      ) VALUES (
+        ?, ?, '', ?, ?, ?,
+        ?, 'P', 0, ?, ?,
+        ' ', 'P', ?, ?, ?,
+        ?, ?, 1
+      )`,
+      [
+        nvatRowId,
+        vatNominalAccount,
+        args.postDate,
+        args.postDate,
+        args.postDate,
+        args.reference.slice(0, 20),
+        netFees,
+        vatAmount,
+        args.feesVatCode,
+        vatRate,
+        nvatComment,
         args.now.iso,
         args.now.iso,
       ],
