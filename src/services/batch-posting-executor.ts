@@ -1004,7 +1004,7 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         0, 0, ?, 0, '0       ',
         ?, 'I', 0, ' ', '      ',
         '', '', '  ', '        ', '        ',
-        '', '', ?, '', '', ?, ?, 1
+        '', '', '', ?, ?, 1
       )`,
       [
         atranIdStart + 1,
@@ -1018,7 +1018,6 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
         vatNominalAccount,
         feesVatUnique,
         args.reference.slice(0, 20),
-        args.feesVatCode,
         args.now.iso,
         args.now.iso,
       ],
