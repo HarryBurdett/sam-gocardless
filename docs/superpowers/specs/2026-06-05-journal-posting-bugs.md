@@ -1,7 +1,13 @@
 # Journal-posting bugs found in production audit (2026-06-05)
 
-**Status:** captured (not started)
+**Status:**
+- Bug 1 (VAT leg drop) — **FIXED 2026-06-08** in commit `dea521e`
+- Bug 2 (njmemo regression) — **WITHDRAWN** as false positive after investigation
+- Bug 3 (journal-numbering collision risk) — **FIXED 2026-06-08** in commit `05d5d1d`
+- Corrective journals for the 7 live unbalanced fees entries — **NOT done** (will be addressed when working on live data per operator instruction 2026-06-08)
+
 **Captured:** 2026-06-05
+**Updated:** 2026-06-08
 **Scope:** this repo (sam-gocardless) — also see equivalent memo in `bank-rec` for shared issues
 
 ## How this was found
@@ -119,26 +125,38 @@ Recommend running these corrections in a single transaction per company, after t
 
 ---
 
-## Bug 2 — `njmemo` coverage regression (MEDIUM — audit trail degradation)
+## ~~Bug 2 — `njmemo` coverage regression~~ — **WITHDRAWN 2026-06-08** (false positive)
 
-**Symptom:** GoCardless journals are missing the `njmemo` row (the report-visible narrative) on ~40-60% of journals. Other posting sources (manual Desktop, Zahara) achieve ~100% coverage.
+The original audit reported GOCARDLS-source journals at 38-62%
+njmemo coverage vs ZAHARA / Desktop at 100%, attributing the gap to
+this app. **Investigation showed this is not a bug in this repo.**
 
-**Production evidence (6-month window):**
+The `nt_inp = 'GOCARDLS'` marker is written by **two distinct
+codebases** that both run against the same Opera SE databases:
+- This TypeScript repo (`sam-gocardless`)
+- Legacy Python at `/Users/maccb/llmragsql/sql_rag/opera_sql_import.py`
+  and `apps/gocardless/api/routes.py` (~line 858, 3409, 3802, 6195)
 
-| Source | cloudsis coverage | intsys coverage |
-|---|---|---|
-| ZAHARA (Desktop) | 100% | 100% |
-| JON / JONATHAN | 100% | 100% |
-| **GOCARDLS** (this app) | **49% / 56% / 62%** by posttyp | **38% / 58% / 62%** |
+Both write `input_by="GOCARDLS"` (8 chars). The audit can't
+distinguish their writes from `nt_inp` alone, so the coverage
+percentage is a blend of both systems.
 
-By posting type, the gaps are concentrated in:
-- `posttyp=S trtype=A` (sales receipts) — 49-58% coverage
-- `posttyp=N trtype=A` (nominal/fees) — 38-56% coverage
-- `posttyp=T trtype=A` (transfers) — 58-62% coverage
+Verified by reading every `INSERT INTO ntran` site in
+`batch-posting-executor.ts` and confirming each is paired with an
+`insertNjmemo` call:
 
-**Impact:** Opera NL reports show blank journal narratives for affected entries. Not an accounting error per se — but breaks audit trail and operator usability.
+- `:472, :512` (insertNtranPair helper, used for receipts) → caller at `:1907`
+- `:776, :822, :865` (postFeesEntry NL legs) → `:904`
+- `:1479, :1523` (postDestinationTransfer pair) → `:1565`
 
-**Where to look:** every `INSERT INTO ntran` site in `batch-posting-executor.ts` and `import-batch.ts` should be paired with a corresponding `INSERT INTO njmemo (nj_journal, nj_memo, ...)` write. The pairing has been dropped for some posting paths.
+Every code path in this repo that writes ntran also writes njmemo
+in the same transaction. The 38-62% coverage figure is attributable
+to the legacy Python paths, not this app.
+
+**No fix needed in this repo.** If the legacy Python ever needs an
+njmemo-coverage audit, the equivalent helper is `_insert_njmemo` in
+`opera_sql_import.py` (~lines 709-741) and the call sites in
+`apps/gocardless/api/routes.py`.
 
 ---
 
