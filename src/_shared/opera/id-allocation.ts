@@ -28,19 +28,44 @@ import type { Knex } from 'knex';
  * Returns the FIRST allocated journal number; caller uses
  * `first..first+count-1`. Defaults `count=1`.
  *
- * UPDLOCK + ROWLOCK on the read prevents concurrent allocation.
+ * UPDLOCK + ROWLOCK on the read serialises concurrent SAM allocators.
+ *
+ * Bug 3 hardening (2026-06-05 production audit): Opera Desktop /
+ * Zahara / other integrations write to ntran but do NOT update
+ * nparm.np_nexjrnl. On the live cloudsis DB at audit time, nparm
+ * said next=201 but MAX(nt_jrnl) in the current year was 6650 — a
+ * SAM allocation of 201 would have been safe today only because
+ * Desktop happened not to have used 201, but the next time the two
+ * ranges overlap we'd collide and overwrite a Desktop journal. The
+ * fix: take MAX(nparm.np_nexjrnl, MAX(nt_jrnl in current year) + 1)
+ * so we never allocate below the high-water mark regardless of
+ * what other posting sources are doing.
+ *
+ * Year scope: nt_jrnl is unique within (nt_year, nt_jrnl) rather
+ * than globally, so the MAX is scoped to the current open year per
+ * nparm.np_year.
  */
 export async function getNextJournal(
   trx: Knex,
   count: number = 1,
 ): Promise<number> {
   const rows = (await trx.raw(
-    `SELECT np_nexjrnl FROM nparm WITH (UPDLOCK, ROWLOCK)`,
-  )) as unknown as Array<{ np_nexjrnl: number | null }>;
-  const next =
-    Array.isArray(rows) && rows[0] && rows[0].np_nexjrnl != null
-      ? Number(rows[0].np_nexjrnl)
-      : 1;
+    `SELECT
+       np.np_nexjrnl AS nparm_next,
+       np.np_year    AS curr_year,
+       (SELECT MAX(nt_jrnl) FROM ntran WITH (NOLOCK)
+          WHERE nt_year = np.np_year) AS ntran_max
+     FROM nparm np WITH (UPDLOCK, ROWLOCK)`,
+  )) as unknown as Array<{
+    nparm_next: number | null;
+    curr_year: number | null;
+    ntran_max: number | null;
+  }>;
+  const row = Array.isArray(rows) ? rows[0] : undefined;
+  const nparmNext = row?.nparm_next != null ? Number(row.nparm_next) : 1;
+  const ntranMax = row?.ntran_max != null ? Number(row.ntran_max) : 0;
+  const desktopFloor = ntranMax + 1;
+  const next = Math.max(nparmNext, desktopFloor);
   await trx.raw(
     `UPDATE nparm WITH (ROWLOCK) SET np_nexjrnl = ?`,
     [next + count],

@@ -17,8 +17,9 @@ function makeOperaDb(state: State): any {
   const raw = async (sql: string, params: any[] = []) => {
     state.calls.push({ sql, params });
     const lower = sql.toLowerCase();
-    if (lower.includes('select np_nexjrnl from nparm')) {
-      return [{ np_nexjrnl: 1000 }];
+    // Post-Bug-3 fix: getNextJournal queries np_nexjrnl + MAX(nt_jrnl) jointly.
+    if (lower.includes('np_nexjrnl') || lower.includes('nparm_next')) {
+      return [{ nparm_next: 1000, curr_year: 2026, ntran_max: 999 }];
     }
     if (lower.includes('select nextid from nextid')) {
       const tbl = (params?.[0] ?? '').toString();
