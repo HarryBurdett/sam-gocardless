@@ -680,6 +680,35 @@ interface FeesPostResult {
   anomlCount: number; // 0, 2, or 3
 }
 
+/**
+ * Bug 1 invariant (2026-06-05 production audit): a fees journal that
+ * carries VAT MUST be posted as 3 legs (DR net + DR VAT + CR gross).
+ * The vatAmount itself is always known (it's calculated and shown to
+ * the operator in the UI before posting); only the destination
+ * nominal account can fail to resolve. When the VAT line cannot be
+ * posted because the nominal can't be resolved, refusing the whole
+ * journal is the only safe option — silently dropping the VAT leg
+ * would leave the books unbalanced AND lose recoverable VAT input,
+ * which is the original bug this guards against.
+ *
+ * Exported so the invariant can be unit-tested independently of the
+ * full posting flow (which depends on a large mocked DB graph).
+ */
+export function assertVatLineCanBePosted(
+  vatAmount: number,
+  vatNominalAccount: string,
+  vatCode: string,
+): void {
+  if (vatAmount > 0 && vatNominalAccount.trim() === '') {
+    throw new Error(
+      `Cannot post GoCardless fees journal: VAT amount is £${vatAmount.toFixed(2)} ` +
+        `but VAT code '${vatCode}' has no nominal_account configured. ` +
+        `Configure the VAT nominal in Opera VAT code maintenance, ` +
+        `or set Fees VAT to 0 in the GoCardless batch before retrying.`,
+    );
+  }
+}
+
 async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostResult> {
   const grossFees = Math.abs(args.grossFees);
   const vatAmount = Math.abs(args.vatOnFees);
@@ -688,8 +717,12 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
   const netFeesPence = Math.round(netFees * 100);
   const vatPence = Math.round(vatAmount * 100);
 
-  // VAT code lookup (for nominal account + rate). Errors are non-fatal —
-  // we proceed without VAT split if lookup fails.
+  // VAT code lookup (for nominal account + rate). The lookup itself
+  // is non-fatal — if the VAT-codes table read throws we proceed
+  // with an unresolved vatNominalAccount and the invariant assert
+  // below will turn that into a clean operator-actionable error
+  // (rather than silently dropping the VAT leg the way the legacy
+  // Python did — see Bug 1 in the 2026-06-05 audit memo).
   let vatNominalAccount = '';
   if (vatAmount > 0) {
     try {
@@ -698,9 +731,15 @@ async function postFeesEntry(trx: Knex, args: PostFeesArgs): Promise<FeesPostRes
       const code = vatCodes.vatCodes.find((v) => v.code === args.feesVatCode);
       if (code) vatNominalAccount = code.nominal_account;
     } catch {
-      // proceed without VAT nominal — line will be skipped
+      // proceed without VAT nominal — assert below will refuse the post
     }
   }
+
+  // Bug 1 invariant: refuse the entire posting if vatAmount > 0 but
+  // we can't resolve where to post it. This replaces the silent-skip
+  // behaviour that produced 7 unbalanced fees journals on production
+  // between 2026-05-08 and 2026-05-20 (£47.91 of VAT input lost).
+  assertVatLineCanBePosted(vatAmount, vatNominalAccount, args.feesVatCode);
 
   const feesCbtype = await resolveFeesPaymentType(trx, args.feesPaymentType);
   const feesEntryNumber = await incrementAtypeEntry(trx, feesCbtype);
