@@ -178,6 +178,25 @@ export function createRouter(ctx: AppContext): Router {
   }
 
   /**
+   * Return the trimmed Opera company code for this request, or null
+   * (and send 400) if SAM didn't set the X-Opera-Company header. Use
+   * BEFORE any read/write of a per-company table (settings, mandates,
+   * payments, etc.) — see src/_shared/get-company.ts for the rationale.
+   */
+  function requireCompany(req: Request, res: Response): string | null {
+    const company =
+      typeof req.operaCompany === 'string' ? req.operaCompany.trim() : '';
+    if (!company) {
+      res.status(400).json({
+        success: false,
+        error: 'No Opera company in context. SAM should set X-Opera-Company.',
+      });
+      return null;
+    }
+    return company;
+  }
+
+  /**
    * Several legacy GoCardless endpoints (e.g. POST /api/gocardless/import,
    * /import-from-email, /match-customers, /revalidate-batches) declare
    * the request body as a bare JSON array via FastAPI's
@@ -203,14 +222,8 @@ export function createRouter(ctx: AppContext): Router {
   }
 
   function getOperaDb(req: Request, res: Response): import('knex').Knex | null {
-    const company = req.operaCompany;
-    if (!company) {
-      res.status(400).json({
-        success: false,
-        error: 'No Opera company in context. SAM should set X-Opera-Company.',
-      });
-      return null;
-    }
+    const company = requireCompany(req, res);
+    if (!company) return null;
     const db = ctx.db.getCompanyDb(company);
     if (!db) {
       res.status(503).json({
@@ -228,11 +241,13 @@ export function createRouter(ctx: AppContext): Router {
    * Returns the GoCardless settings dict with secrets masked. Faithful
    * port of `get_gocardless_settings` in the Python codebase.
    */
-  router.get('/api/gocardless/settings', async (_req: Request, res: Response) => {
-    const appDb = getAppDb(_req, res);
+  router.get('/api/gocardless/settings', async (req: Request, res: Response) => {
+    const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
-      const settings = await loadSettings(appDb);
+      const settings = await loadSettings(appDb, company);
       const masked = maskSettingsForResponse(settings);
       res.json({ success: true, settings: masked });
     } catch (err: any) {
@@ -251,11 +266,13 @@ export function createRouter(ctx: AppContext): Router {
   router.post('/api/gocardless/settings', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const existing = await loadSettings(appDb);
+      const existing = await loadSettings(appDb, company);
       const merged: GoCardlessSettings = mergeSettingsUpdate(existing, body);
-      const ok = await saveSettings(appDb, merged);
+      const ok = await saveSettings(appDb, company, merged);
       if (ok) {
         res.json({ success: true, message: 'Settings saved' });
       } else {
@@ -276,12 +293,14 @@ export function createRouter(ctx: AppContext): Router {
   router.get('/api/gocardless/health-check', async (req: Request, res: Response) => {
     const operaDb = getOperaDb(req, res);
     if (!operaDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
       const appDb = ctx.db.app;
       let settings: GoCardlessSettings | null = null;
       if (appDb) {
         try {
-          settings = await loadSettings(appDb);
+          settings = await loadSettings(appDb, company);
         } catch (err) {
           ctx.logger.debug('GoCardless settings not loadable', err);
         }
@@ -304,9 +323,11 @@ export function createRouter(ctx: AppContext): Router {
    * Reports whether GoCardless is configured (api_access_token > 10 chars).
    * Used by the launcher to decide whether to redirect to signup.
    */
-  router.get('/api/gocardless/setup-status', async (_req: Request, res: Response) => {
+  router.get('/api/gocardless/setup-status', async (req: Request, res: Response) => {
     try {
-      const result = await getSetupStatus(ctx.db.app);
+      const company = requireCompany(req, res);
+      if (!company) return;
+      const result = await getSetupStatus(ctx.db.app, company);
       res.json(result);
     } catch (err: any) {
       ctx.logger.error('Setup status failed', err);
@@ -537,11 +558,9 @@ export function createRouter(ctx: AppContext): Router {
     if (!appDb) return;
     // Opera DB is optional — if missing the history is returned without
     // Opera-name enrichment.
-    let operaDb: import('knex').Knex | null = null;
-    const company = req.operaCompany;
-    if (company) {
-      operaDb = ctx.db.getCompanyDb(company);
-    }
+    const company = requireCompany(req, res);
+    if (!company) return;
+    const operaDb: import('knex').Knex | null = ctx.db.getCompanyDb(company);
     try {
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const fromDate = typeof req.query.from_date === 'string' ? req.query.from_date : null;
@@ -597,8 +616,10 @@ export function createRouter(ctx: AppContext): Router {
   router.post('/api/gocardless/test-api', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
-      const settings = await loadSettings(appDb);
+      const settings = await loadSettings(appDb, company);
       const client = createClientFromSettings(settings);
       if (!client) {
         res.json({ success: false, error: 'No API access token configured' });
@@ -724,8 +745,10 @@ export function createRouter(ctx: AppContext): Router {
     if (!appDb) return;
     const operaDb = getOperaDb(req, res);
     if (!operaDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
-      const settings = await loadSettings(appDb);
+      const settings = await loadSettings(appDb, company);
       const accessToken = settings.api_access_token ?? '';
       if (!accessToken) {
         res.json({
@@ -790,11 +813,9 @@ export function createRouter(ctx: AppContext): Router {
   router.get('/api/gocardless/receipt-search', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
-    let operaDb: import('knex').Knex | null = null;
-    const company = req.operaCompany;
-    if (company) {
-      operaDb = ctx.db.getCompanyDb(company);
-    }
+    const company = requireCompany(req, res);
+    if (!company) return;
+    const operaDb: import('knex').Knex | null = ctx.db.getCompanyDb(company);
     try {
       const customer =
         typeof req.query.customer === 'string' ? req.query.customer : null;
@@ -945,6 +966,8 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = req.body as PaymentInput[] | { payments?: PaymentInput[] };
         const payments = Array.isArray(body)
@@ -959,7 +982,7 @@ export function createRouter(ctx: AppContext): Router {
           });
           return;
         }
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const result = await matchCustomersWithDuplicateCheck(
           appDb,
           operaDb,
@@ -1091,8 +1114,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -1183,6 +1208,8 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as {
           opera_account?: string;
@@ -1207,7 +1234,7 @@ export function createRouter(ctx: AppContext): Router {
         let scheme = 'bacs';
         let customerId: string | null = null;
         let email: string | null = null;
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (client) {
           const m = await client.getMandate(mandateId);
@@ -1373,8 +1400,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -1483,8 +1512,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -1700,8 +1731,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const advanceDate =
           typeof req.query.advance_date === 'string' ? req.query.advance_date : null;
         const includeFuture =
@@ -1748,8 +1781,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const requireMandateRaw = req.query.require_mandate;
         const requireMandate =
           requireMandateRaw === undefined
@@ -1824,8 +1859,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -1941,8 +1978,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2120,8 +2159,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2199,12 +2240,14 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       // Opera DB is optional — enrichment is a best-effort overlay.
-      const company = req.operaCompany;
-      const operaDb = company ? ctx.db.getCompanyDb(company) : null;
+      const operaDb = ctx.db.getCompanyDb(company);
       try {
         const result = await listSubscriptions(
           appDb,
+          company,
           {
             status:
               typeof req.query.status === 'string' ? req.query.status : null,
@@ -2241,12 +2284,14 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as {
           subscription_id?: string;
           source_doc?: string;
         };
-        const result = await linkSubscriptionToDocument(appDb, {
+        const result = await linkSubscriptionToDocument(appDb, company, {
           subscriptionId: String(body.subscription_id ?? ''),
           sourceDoc: String(body.source_doc ?? ''),
         });
@@ -2278,12 +2323,14 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as {
           subscription_id?: string;
           source_doc?: string;
         };
-        const result = await unlinkSubscriptionFromDocument(appDb, {
+        const result = await unlinkSubscriptionFromDocument(appDb, company, {
           subscriptionId: String(body.subscription_id ?? ''),
           sourceDoc:
             typeof body.source_doc === 'string' && body.source_doc
@@ -2332,8 +2379,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2415,6 +2464,7 @@ export function createRouter(ctx: AppContext): Router {
           });
         const result = await createSubscription(
           appDb,
+          company,
           {
             sourceDocs,
             dayOfMonth:
@@ -2456,8 +2506,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2508,6 +2560,7 @@ export function createRouter(ctx: AppContext): Router {
         };
         const result = await syncSubscriptionsFromGocardless(
           appDb,
+          company,
           fetchPage,
           { resolveAccount },
         );
@@ -2535,11 +2588,13 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
-      const company = req.operaCompany;
-      const operaDb = company ? ctx.db.getCompanyDb(company) : null;
+      const company = requireCompany(req, res);
+      if (!company) return;
+      const operaDb = ctx.db.getCompanyDb(company);
       try {
         const result = await getSubscription(
           appDb,
+          company,
           String(req.params.subscription_id ?? ''),
           operaDb,
         );
@@ -2570,8 +2625,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2599,6 +2656,7 @@ export function createRouter(ctx: AppContext): Router {
           });
         const result = await updateSubscriptionDetails(
           appDb,
+          company,
           subscriptionId,
           {
             name: typeof body.name === 'string' ? body.name : null,
@@ -2630,8 +2688,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2642,8 +2702,9 @@ export function createRouter(ctx: AppContext): Router {
         }
         const result = await pauseSubscription(
           appDb,
+          company,
           String(req.params.subscription_id ?? ''),
-          (id) => client.pauseSubscription(id),
+          (id: string) => client.pauseSubscription(id),
         );
         if (!result.success) {
           const isMissing =
@@ -2671,8 +2732,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2683,8 +2746,9 @@ export function createRouter(ctx: AppContext): Router {
         }
         const result = await resumeSubscription(
           appDb,
+          company,
           String(req.params.subscription_id ?? ''),
-          (id) => client.resumeSubscription(id),
+          (id: string) => client.resumeSubscription(id),
         );
         if (!result.success) {
           const isMissing =
@@ -2719,8 +2783,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!appDb) return;
       const operaDb = getOperaDb(req, res);
       if (!operaDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2748,6 +2814,7 @@ export function createRouter(ctx: AppContext): Router {
           client.updateSubscription(id, { amountPence });
         const result = await syncSubscriptionFromOpera(
           appDb,
+          company,
           subscriptionId,
           readOperaDocAmount,
           updateRemote,
@@ -2778,8 +2845,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2790,8 +2859,9 @@ export function createRouter(ctx: AppContext): Router {
         }
         const result = await cancelSubscription(
           appDb,
+          company,
           String(req.params.subscription_id ?? ''),
-          (id) => client.cancelSubscription(id),
+          (id: string) => client.cancelSubscription(id),
         );
         if (!result.success) {
           const isMissing =
@@ -2852,8 +2922,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         if (!client) {
           res.status(400).json({
@@ -2918,9 +2990,11 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const id = Number(req.params.request_id);
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const client = createClientFromSettings(settings);
         const cancelRemote = client
           ? async (paymentId: string) => {
@@ -3045,8 +3119,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const body = (req.body ?? {}) as Record<string, unknown>;
         const result = await updateSubscriptionTags(
           operaDb,
@@ -3084,6 +3160,8 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as {
           company_name?: string;
@@ -3092,7 +3170,7 @@ export function createRouter(ctx: AppContext): Router {
         const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
         const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? '';
         const baseUrl = host ? `${proto}://${host}` : '';
-        const result = await initiatePartnerSignup(appDb, {
+        const result = await initiatePartnerSignup(appDb, company, {
           companyName: String(body.company_name ?? ''),
           companyEmail: String(body.company_email ?? ''),
           baseUrl,
@@ -3123,11 +3201,13 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
         const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? '';
         const baseUrl = host ? `${proto}://${host}` : '';
-        const result = await handlePartnerCallback(appDb, {
+        const result = await handlePartnerCallback(appDb, company, {
           code: typeof req.query.code === 'string' ? req.query.code : null,
           state: typeof req.query.state === 'string' ? req.query.state : null,
           error: typeof req.query.error === 'string' ? req.query.error : null,
@@ -3162,12 +3242,14 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         // Mirror Python's `request.base_url`: protocol://host (+ port)
         const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
         const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? '';
         const baseUrl = host ? `${proto}://${host}` : '';
-        const result = await getPartnerConfig(appDb, { baseUrl });
+        const result = await getPartnerConfig(appDb, company, { baseUrl });
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Partner config failed', err);
@@ -3187,8 +3269,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await getLatestPartnerSignup(appDb);
+        const result = await getLatestPartnerSignup(appDb, company);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Partner signup-status failed', err);
@@ -3209,12 +3293,14 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const status =
           typeof req.query.status === 'string' && req.query.status.trim()
             ? req.query.status.trim()
             : null;
-        const result = await getAllMerchantSignups(appDb, { status });
+        const result = await getAllMerchantSignups(appDb, company, { status });
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Partner merchants failed', err);
@@ -3236,9 +3322,11 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as { password?: string };
-        const result = await partnerAdminAuth(appDb, String(body.password ?? ''));
+        const result = await partnerAdminAuth(appDb, company, String(body.password ?? ''));
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Partner admin auth failed', err);
@@ -3259,10 +3347,13 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as { password?: string };
         const result = await setPartnerAdminPassword(
           appDb,
+          company,
           String(body.password ?? ''),
         );
         res.json(result);
@@ -3284,10 +3375,12 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as { signup_id?: number; app_url?: string };
         const signupId = Number(body.signup_id ?? 0);
-        const result = await updateMerchantAppUrl(appDb, {
+        const result = await updateMerchantAppUrl(appDb, company, {
           signupId,
           appUrl: String(body.app_url ?? ''),
         });
@@ -3315,10 +3408,12 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const body = (req.body ?? {}) as { signup_id?: number };
         const signupId = Number(body.signup_id ?? 0);
-        const result = await activateMerchant(appDb, { signupId });
+        const result = await activateMerchant(appDb, company, { signupId });
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Activate merchant failed', err);
@@ -3337,12 +3432,14 @@ export function createRouter(ctx: AppContext): Router {
   router.put('/api/gocardless/deploy-token', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
       const body = (req.body ?? {}) as {
         access_token?: string;
         company_name?: string;
       };
-      const result = await deployToken(appDb, body);
+      const result = await deployToken(appDb, company, body);
       res.json(result);
     } catch (err: any) {
       ctx.logger.error('Deploy token failed', err);
@@ -3431,6 +3528,8 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       const adapter =
         (ctx as unknown as {
           gocardlessMailboxAdapter?: EmailMailboxAdapter;
@@ -3444,7 +3543,7 @@ export function createRouter(ctx: AppContext): Router {
         return;
       }
       try {
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const fromDate = (req.query.from_date as string) ?? null;
         const toDate = (req.query.to_date as string) ?? null;
         const includeProcessed =
@@ -3507,6 +3606,8 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       const adapter = ctx as unknown as {
         gocardlessBatchExecutor?: BatchPostingExecutor;
         gocardlessImportLock?: ImportLockAdapter;
@@ -3516,7 +3617,7 @@ export function createRouter(ctx: AppContext): Router {
       try {
         const body = readObjectBody(req);
         const payments = readArrayBody<IncomingPayment>(req, 'payments');
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const known = (await appDb('gocardless_mandates')
           .select(
             'mandate_id',
@@ -3622,6 +3723,8 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       const adapter = ctx as unknown as {
         gocardlessBatchExecutor?: BatchPostingExecutor;
         gocardlessImportLock?: ImportLockAdapter;
@@ -3632,7 +3735,7 @@ export function createRouter(ctx: AppContext): Router {
       try {
         const body = readObjectBody(req);
         const payments = readArrayBody<IncomingPayment>(req, 'payments');
-        const settings = await loadSettings(appDb);
+        const settings = await loadSettings(appDb, company);
         const known = (await appDb('gocardless_mandates').select(
           'mandate_id',
           'opera_account',

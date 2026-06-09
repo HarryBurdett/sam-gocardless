@@ -143,6 +143,8 @@ describe('getImportConfig', () => {
 });
 
 describe('getSetupStatus', () => {
+  const TEST_COMPANY = 'C';
+
   function makeAppDb(canned: { settings?: any; signup?: any }): any {
     const db: any = (table: string) => {
       if (table === 'settings') {
@@ -168,7 +170,7 @@ describe('getSetupStatus', () => {
     const db = makeAppDb({
       settings: { api_access_token: 'sandbox_test_token_long_enough' },
     });
-    const result = await getSetupStatus(db);
+    const result = await getSetupStatus(db, TEST_COMPANY);
     expect(result.configured).toBe(true);
     expect(result.pending_signup).toBeNull();
   });
@@ -177,7 +179,7 @@ describe('getSetupStatus', () => {
     const db = makeAppDb({
       signup: { id: 1, status: 'pending', merchant_email: 'x@y.com' },
     });
-    const result = await getSetupStatus(db);
+    const result = await getSetupStatus(db, TEST_COMPANY);
     expect(result.configured).toBe(false);
     expect(result.pending_signup).toMatchObject({ id: 1, status: 'pending' });
   });
@@ -186,13 +188,13 @@ describe('getSetupStatus', () => {
     const db = makeAppDb({
       signup: { id: 1, status: 'completed', merchant_email: 'x@y.com' },
     });
-    const result = await getSetupStatus(db);
+    const result = await getSetupStatus(db, TEST_COMPANY);
     expect(result.configured).toBe(false);
     expect(result.pending_signup).toBeNull();
   });
 
   it('returns configured=false when no app DB', async () => {
-    const result = await getSetupStatus(null);
+    const result = await getSetupStatus(null, TEST_COMPANY);
     expect(result.configured).toBe(false);
     expect(result.pending_signup).toBeNull();
   });

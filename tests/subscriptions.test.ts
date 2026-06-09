@@ -15,6 +15,8 @@ import {
   type RemoteSubscriptionResult,
 } from '../src/services/subscriptions.js';
 
+const TEST_COMPANY = 'C';
+
 // ---------------------------------------------------------------------
 // Mock app DB — covers the Knex shapes used by subscriptions.ts.
 // ---------------------------------------------------------------------
@@ -320,7 +322,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.count).toBe(2);
     expect(result.subscriptions[0]?.id).toBe(2);
@@ -335,7 +337,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state), { status: 'paused' });
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY, { status: 'paused' });
     expect(result.count).toBe(1);
     expect(result.subscriptions[0]?.status).toBe('paused');
   });
@@ -349,7 +351,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.count).toBe(1);
     expect(result.subscriptions[0]?.status).toBe('active');
   });
@@ -363,7 +365,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state), {
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY, {
       includeCancelled: true,
     });
     expect(result.count).toBe(2);
@@ -375,7 +377,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.customer_name).toBe('Acme Ltd');
   });
 
@@ -385,7 +387,7 @@ describe('listSubscriptions', () => {
       mandates: [{ opera_account: 'CUST01', opera_name: 'Beta Co' }],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.customer_name).toBe('Beta Co');
   });
 
@@ -395,7 +397,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.customer_name).toBe('CUST99');
   });
 
@@ -408,7 +410,7 @@ describe('listSubscriptions', () => {
         { subscription_id: 'SUB1', source_doc: 'INV002', added_at: '2026-04-02' },
       ],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.source_docs).toEqual(['INV001', 'INV002']);
   });
 
@@ -418,7 +420,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.amount_pounds).toBeCloseTo(12345.67, 2);
     expect(result.subscriptions[0]?.amount_formatted).toBe('£12,345.67');
   });
@@ -429,7 +431,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     expect(result.subscriptions[0]?.frequency).toBe('Quarterly');
   });
 
@@ -442,7 +444,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state));
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY);
     const map = Object.fromEntries(
       result.subscriptions.map((s) => [s.subscription_id, s.frequency]),
     );
@@ -462,7 +464,7 @@ describe('listSubscriptions', () => {
       mandates: [],
       docs: [],
     };
-    const result = await listSubscriptions(makeAppDb(state), { limit: 2 });
+    const result = await listSubscriptions(makeAppDb(state), TEST_COMPANY, { limit: 2 });
     expect(result.count).toBe(2);
   });
 });
@@ -474,7 +476,7 @@ describe('listSubscriptions', () => {
 describe('getSubscription', () => {
   it('returns 404-style error when not found', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const result = await getSubscription(makeAppDb(state), 'MISSING');
+    const result = await getSubscription(makeAppDb(state), TEST_COMPANY, 'MISSING');
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
@@ -487,7 +489,7 @@ describe('getSubscription', () => {
         { subscription_id: 'SUB1', source_doc: 'D1', added_at: '2026-04-01' },
       ],
     };
-    const result = await getSubscription(makeAppDb(state), 'SUB1');
+    const result = await getSubscription(makeAppDb(state), TEST_COMPANY, 'SUB1');
     expect(result.success).toBe(true);
     expect(result.subscription?.subscription_id).toBe('SUB1');
     expect(result.subscription?.source_docs).toEqual(['D1']);
@@ -496,7 +498,7 @@ describe('getSubscription', () => {
 
   it('rejects empty subscription_id', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const result = await getSubscription(makeAppDb(state), '');
+    const result = await getSubscription(makeAppDb(state), TEST_COMPANY, '');
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/required/);
   });
@@ -513,14 +515,14 @@ describe('updateSubscriptionStatus', () => {
       mandates: [],
       docs: [],
     };
-    const ok = await updateSubscriptionStatus(makeAppDb(state), 'SUB1', 'paused');
+    const ok = await updateSubscriptionStatus(makeAppDb(state), TEST_COMPANY, 'SUB1', 'paused');
     expect(ok).toBe(true);
     expect(state.subs[0]?.status).toBe('paused');
   });
 
   it('returns false when subscription missing', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const ok = await updateSubscriptionStatus(makeAppDb(state), 'MISSING', 'x');
+    const ok = await updateSubscriptionStatus(makeAppDb(state), TEST_COMPANY, 'MISSING', 'x');
     expect(ok).toBe(false);
   });
 });
@@ -541,7 +543,7 @@ describe('pauseSubscription', () => {
       called = id;
       return ok('paused');
     };
-    const result = await pauseSubscription(makeAppDb(state), 'SUB1', remote);
+    const result = await pauseSubscription(makeAppDb(state), TEST_COMPANY, 'SUB1', remote);
     expect(result.success).toBe(true);
     expect(called).toBe('SUB1');
     expect(result.subscription?.status).toBe('paused');
@@ -554,7 +556,7 @@ describe('pauseSubscription', () => {
       mandates: [],
       docs: [],
     };
-    const result = await pauseSubscription(makeAppDb(state), 'SUB1', async () => ({
+    const result = await pauseSubscription(makeAppDb(state), TEST_COMPANY, 'SUB1', async () => ({
       success: true,
       subscription: {},
     }));
@@ -568,7 +570,7 @@ describe('pauseSubscription', () => {
       mandates: [],
       docs: [],
     };
-    const result = await pauseSubscription(makeAppDb(state), 'SUB1', async () => ({
+    const result = await pauseSubscription(makeAppDb(state), TEST_COMPANY, 'SUB1', async () => ({
       success: false,
       error: 'GoCardless API down',
     }));
@@ -579,7 +581,7 @@ describe('pauseSubscription', () => {
   it('rejects empty id without calling remote', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     let called = false;
-    const result = await pauseSubscription(makeAppDb(state), '', async () => {
+    const result = await pauseSubscription(makeAppDb(state), TEST_COMPANY, '', async () => {
       called = true;
       return ok('paused');
     });
@@ -597,6 +599,7 @@ describe('resumeSubscription', () => {
     };
     const result = await resumeSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ok('active'),
     );
@@ -614,6 +617,7 @@ describe('cancelSubscription', () => {
     };
     const result = await cancelSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ok('cancelled'),
     );
@@ -643,6 +647,7 @@ describe('updateSubscriptionDetails', () => {
     const captured: any = {};
     const result = await updateSubscriptionDetails(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       { name: 'New', amountPence: 25000 },
       async (id, opts) => {
@@ -672,6 +677,7 @@ describe('updateSubscriptionDetails', () => {
     };
     await updateSubscriptionDetails(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       { amountPence: 25000 },
       async (id) => ({ success: true, subscription: { id, status: 'active' } }),
@@ -688,6 +694,7 @@ describe('updateSubscriptionDetails', () => {
     };
     const result = await updateSubscriptionDetails(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       { amountPence: 99999 },
       async () => ({ success: false, error: 'invalid' }),
@@ -708,7 +715,7 @@ describe('linkSubscriptionToDocument', () => {
       mandates: [],
       docs: [],
     };
-    const result = await linkSubscriptionToDocument(makeAppDb(state), {
+    const result = await linkSubscriptionToDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
       sourceDoc: 'INV001',
     });
@@ -726,7 +733,7 @@ describe('linkSubscriptionToDocument', () => {
         { subscription_id: 'OTHER', source_doc: 'INV001', added_at: '2026-04-01' },
       ],
     };
-    const result = await linkSubscriptionToDocument(makeAppDb(state), {
+    const result = await linkSubscriptionToDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
       sourceDoc: 'INV001',
     });
@@ -742,7 +749,7 @@ describe('linkSubscriptionToDocument', () => {
         { subscription_id: 'SUB1', source_doc: 'INV001', added_at: '2026-04-01' },
       ],
     };
-    const result = await linkSubscriptionToDocument(makeAppDb(state), {
+    const result = await linkSubscriptionToDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
       sourceDoc: 'INV001',
     });
@@ -752,7 +759,7 @@ describe('linkSubscriptionToDocument', () => {
 
   it('refuses when subscription is not present locally', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const result = await linkSubscriptionToDocument(makeAppDb(state), {
+    const result = await linkSubscriptionToDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'MISSING',
       sourceDoc: 'INV001',
     });
@@ -762,7 +769,7 @@ describe('linkSubscriptionToDocument', () => {
 
   it('rejects empty inputs', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const result = await linkSubscriptionToDocument(makeAppDb(state), {
+    const result = await linkSubscriptionToDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: '',
       sourceDoc: 'X',
     });
@@ -775,6 +782,7 @@ describe('syncSubscriptionFromOpera', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'MISSING',
       async () => ({ lineNettPence: 0, lineVatPence: 0 }),
       async () => ({ success: true }),
@@ -791,6 +799,7 @@ describe('syncSubscriptionFromOpera', () => {
     };
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ({ lineNettPence: 0, lineVatPence: 0 }),
       async () => ({ success: true }),
@@ -809,6 +818,7 @@ describe('syncSubscriptionFromOpera', () => {
     };
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ({ lineNettPence: 0, lineVatPence: 0 }),
       async () => ({ success: true }),
@@ -828,6 +838,7 @@ describe('syncSubscriptionFromOpera', () => {
     let remoteCalled = false;
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ({ lineNettPence: 10000, lineVatPence: 2000 }),
       async () => {
@@ -852,6 +863,7 @@ describe('syncSubscriptionFromOpera', () => {
     let remoteAmount = 0;
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ({ lineNettPence: 12500, lineVatPence: 2500 }),
       async (_id, amount) => {
@@ -878,6 +890,7 @@ describe('syncSubscriptionFromOpera', () => {
     };
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       'SUB1',
       async () => ({ lineNettPence: 12500, lineVatPence: 2500 }),
       async () => ({ success: false, error: 'GC API down' }),
@@ -890,6 +903,7 @@ describe('syncSubscriptionFromOpera', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await syncSubscriptionFromOpera(
       makeAppDb(state),
+      TEST_COMPANY,
       '',
       async () => ({ lineNettPence: 1000, lineVatPence: 100 }),
       async () => ({ success: true }),
@@ -908,7 +922,7 @@ describe('unlinkSubscriptionFromDocument', () => {
         { subscription_id: 'SUB1', source_doc: 'B', added_at: '2026-04-02' },
       ],
     };
-    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), {
+    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
       sourceDoc: 'A',
     });
@@ -926,7 +940,7 @@ describe('unlinkSubscriptionFromDocument', () => {
         { subscription_id: 'OTHER', source_doc: 'C', added_at: '2026-04-03' },
       ],
     };
-    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), {
+    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
     });
     expect(result.success).toBe(true);
@@ -939,7 +953,7 @@ describe('unlinkSubscriptionFromDocument', () => {
       mandates: [],
       docs: [],
     };
-    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), {
+    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'SUB1',
       sourceDoc: 'A',
     });
@@ -949,7 +963,7 @@ describe('unlinkSubscriptionFromDocument', () => {
 
   it('returns 404-style error when subscription missing', async () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
-    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), {
+    const result = await unlinkSubscriptionFromDocument(makeAppDb(state), TEST_COMPANY, {
       subscriptionId: 'MISSING',
     });
     expect(result.success).toBe(false);
@@ -993,6 +1007,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     });
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
     );
     expect(result.success).toBe(true);
@@ -1032,6 +1047,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     });
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
     );
     expect(result.success).toBe(true);
@@ -1077,6 +1093,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     const fetchPage = async () => pages[i++] ?? { subscriptions: [], after: null };
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
     );
     expect(result.synced).toBe(2);
@@ -1104,6 +1121,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     });
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       {
         resolveAccount: async (id) => {
@@ -1136,6 +1154,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     });
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
     );
     expect(result.synced).toBe(1);
@@ -1169,6 +1188,7 @@ describe('syncSubscriptionsFromGocardless', () => {
     });
     const result = await syncSubscriptionsFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
     );
     expect(result.success).toBe(true);
@@ -1210,6 +1230,7 @@ describe('createSubscription', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: [] },
       makeReader([], { lineNettPence: 0, lineVatPence: 0 }),
       okRemote,
@@ -1222,6 +1243,7 @@ describe('createSubscription', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC001'] },
       makeReader([], { lineNettPence: 0, lineVatPence: 0 }),
       okRemote,
@@ -1234,6 +1256,7 @@ describe('createSubscription', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1', 'DOC2'] },
       makeReader(
         [
@@ -1264,6 +1287,7 @@ describe('createSubscription', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1'] },
       makeReader(
         [
@@ -1287,6 +1311,7 @@ describe('createSubscription', () => {
     const state: MockState = { subs: [], mandates: [], docs: [] };
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1'] },
       makeReader(
         [
@@ -1325,6 +1350,7 @@ describe('createSubscription', () => {
     (state.mandates[0] as any).created_at = '2026-04-01';
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1'] },
       makeReader(
         [
@@ -1361,6 +1387,7 @@ describe('createSubscription', () => {
     const captured: any = {};
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1', 'DOC2'], dayOfMonth: 15 },
       makeReader(
         [
@@ -1419,6 +1446,7 @@ describe('createSubscription', () => {
     const captured: any = {};
     await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1'] },
       makeReader(
         [
@@ -1460,6 +1488,7 @@ describe('createSubscription', () => {
     (state.mandates[0] as any).created_at = '2026-04-01';
     const result = await createSubscription(
       makeAppDb(state),
+      TEST_COMPANY,
       { sourceDocs: ['DOC1'] },
       makeReader(
         [

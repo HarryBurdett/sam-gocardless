@@ -22,6 +22,15 @@
  * for tests). Mirrors the existing pattern used by `cancelMandate`.
  */
 import type { Knex } from 'knex';
+import { loadSettings } from './settings.js';
+
+// TODO(multi-company): the gocardless_subscriptions and
+// gocardless_subscription_documents queries below do not yet filter by
+// company_code. A follow-up migration (planned
+// 009_subscriptions_company_code.ts) will add the column; once it
+// lands, every appDb('gocardless_subscriptions') and
+// appDb('gocardless_subscription_documents') query in this file must
+// be updated to scope by company.
 
 // ---------------------------------------------------------------------
 // Types
@@ -281,17 +290,22 @@ async function fetchSourceDocs(
 
 /**
  * Look up the `subscription_tag` setting from the gocardless settings
- * row — defaults to 'SUB'. Used by the Opera-doc enrichment to flag
- * which documents are tagged for subscription auto-collection.
+ * for the given Opera company — defaults to 'SUB'. Used by the
+ * Opera-doc enrichment to flag which documents are tagged for
+ * subscription auto-collection.
+ *
+ * 2026-06-09: now reads from the JSON-encoded gocardless_settings
+ * dict (via loadSettings) instead of a non-existent
+ * `key='subscription_tag'` row, AND scopes by companyCode so it
+ * doesn't leak between Opera companies.
  */
-async function loadSubscriptionTag(appDb: Knex): Promise<string> {
+async function loadSubscriptionTag(
+  appDb: Knex,
+  companyCode: string,
+): Promise<string> {
   try {
-    const row = (await appDb('settings')
-      .select('value')
-      .where({ key: 'subscription_tag' })
-      .first()) as { value?: string } | undefined;
-    const v = (row?.value ?? '').trim();
-    return v || 'SUB';
+    const settings = await loadSettings(appDb, companyCode);
+    return (settings.subscription_tag ?? '').trim() || 'SUB';
   } catch {
     return 'SUB';
   }
@@ -413,6 +427,7 @@ async function fetchMandateNames(
 
 export async function listSubscriptions(
   appDb: Knex,
+  companyCode: string,
   opts: ListSubscriptionsOptions = {},
   operaDb: Knex | null = null,
 ): Promise<ListSubscriptionsResponse> {
@@ -437,7 +452,7 @@ export async function listSubscriptions(
     const accounts = Array.from(
       new Set(rows.map((r) => (r.opera_account ?? '').trim()).filter(Boolean)),
     );
-    const subscriptionTag = await loadSubscriptionTag(appDb);
+    const subscriptionTag = await loadSubscriptionTag(appDb, companyCode);
 
     const [docsBySub, mandateNames] = await Promise.all([
       fetchSourceDocs(appDb, subIds),
@@ -495,6 +510,7 @@ export async function listSubscriptions(
 
 export async function getSubscription(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   operaDb: Knex | null = null,
 ): Promise<GetSubscriptionResponse> {
@@ -508,7 +524,7 @@ export async function getSubscription(
       return { success: false, error: `Subscription ${id} not found` };
     }
     const account = (row.opera_account ?? '').trim();
-    const subscriptionTag = await loadSubscriptionTag(appDb);
+    const subscriptionTag = await loadSubscriptionTag(appDb, companyCode);
     const [docsBySub, mandateNames] = await Promise.all([
       fetchSourceDocs(appDb, [id]),
       fetchMandateNames(appDb, account ? [account] : []),
@@ -541,9 +557,13 @@ export async function getSubscription(
 
 export async function updateSubscriptionStatus(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   status: string,
 ): Promise<boolean> {
+  // companyCode is reserved for the upcoming gocardless_subscriptions.company_code
+  // migration; once that's in place we'll filter on it here.
+  void companyCode;
   const id = (subscriptionId ?? '').trim();
   if (!id || !status) return false;
   const updated = await appDb('gocardless_subscriptions')
@@ -558,6 +578,7 @@ export async function updateSubscriptionStatus(
 
 async function runLifecycleAction(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   fallbackStatus: string,
   remote: (id: string) => Promise<RemoteSubscriptionResult>,
@@ -572,8 +593,8 @@ async function runLifecycleAction(
     typeof r.subscription?.status === 'string' && r.subscription.status
       ? (r.subscription.status as string)
       : fallbackStatus;
-  await updateSubscriptionStatus(appDb, id, remoteStatus);
-  const fresh = await getSubscription(appDb, id);
+  await updateSubscriptionStatus(appDb, companyCode, id, remoteStatus);
+  const fresh = await getSubscription(appDb, companyCode, id);
   if (!fresh.success) {
     return { success: false, error: fresh.error };
   }
@@ -582,26 +603,29 @@ async function runLifecycleAction(
 
 export async function pauseSubscription(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   remote: (id: string) => Promise<RemoteSubscriptionResult>,
 ): Promise<SubscriptionLifecycleResponse> {
-  return runLifecycleAction(appDb, subscriptionId, 'paused', remote);
+  return runLifecycleAction(appDb, companyCode, subscriptionId, 'paused', remote);
 }
 
 export async function resumeSubscription(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   remote: (id: string) => Promise<RemoteSubscriptionResult>,
 ): Promise<SubscriptionLifecycleResponse> {
-  return runLifecycleAction(appDb, subscriptionId, 'active', remote);
+  return runLifecycleAction(appDb, companyCode, subscriptionId, 'active', remote);
 }
 
 export async function cancelSubscription(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   remote: (id: string) => Promise<RemoteSubscriptionResult>,
 ): Promise<SubscriptionLifecycleResponse> {
-  return runLifecycleAction(appDb, subscriptionId, 'cancelled', remote);
+  return runLifecycleAction(appDb, companyCode, subscriptionId, 'cancelled', remote);
 }
 
 export interface UpdateSubscriptionInput {
@@ -621,6 +645,7 @@ export interface UpdateSubscriptionInput {
  */
 export async function updateSubscriptionDetails(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   input: UpdateSubscriptionInput,
   remote: (
@@ -652,7 +677,7 @@ export async function updateSubscriptionDetails(
       .where({ subscription_id: id })
       .update(patch);
   }
-  const fresh = await getSubscription(appDb, id);
+  const fresh = await getSubscription(appDb, companyCode, id);
   if (!fresh.success) {
     return { success: false, error: fresh.error };
   }
@@ -726,6 +751,7 @@ export interface CreateSubscriptionResponse {
 
 export async function createSubscription(
   appDb: Knex,
+  companyCode: string,
   input: CreateSubscriptionInput,
   operaReader: OperaRepeatDocReader,
   remote: CreateSubscriptionRemote,
@@ -920,7 +946,7 @@ export async function createSubscription(
   }
 
   // 10. Return enriched local record
-  const fresh = await getSubscription(appDb, gcSubId);
+  const fresh = await getSubscription(appDb, companyCode, gcSubId);
   return {
     success: true,
     subscription: fresh.subscription,
@@ -981,9 +1007,13 @@ interface PageResult {
  */
 export async function syncSubscriptionsFromGocardless(
   appDb: Knex,
+  companyCode: string,
   fetchPage: (cursor: string | null) => Promise<PageResult>,
   opts: SyncOptions = {},
 ): Promise<SyncSubscriptionsResponse> {
+  // companyCode is reserved for the upcoming gocardless_subscriptions.company_code
+  // migration; once that's in place we'll filter on it here.
+  void companyCode;
   try {
     // Build mandate -> {opera_account, opera_name} lookup from local
     const mandates = (await appDb('gocardless_mandates').select(
@@ -1152,6 +1182,7 @@ export interface SyncSubscriptionFromOperaResponse {
  */
 export async function syncSubscriptionFromOpera(
   appDb: Knex,
+  companyCode: string,
   subscriptionId: string,
   readOperaDocAmount: (sourceDocs: string[]) => Promise<OperaDocAmount>,
   updateRemote: (id: string, amountPence: number) => Promise<RemoteSubscriptionResult>,
@@ -1159,7 +1190,7 @@ export async function syncSubscriptionFromOpera(
   const id = (subscriptionId ?? '').trim();
   if (!id) return { success: false, error: 'subscription_id is required' };
 
-  const local = await getSubscription(appDb, id);
+  const local = await getSubscription(appDb, companyCode, id);
   if (!local.success || !local.subscription) {
     return { success: false, error: local.error ?? `Subscription ${id} not found` };
   }
@@ -1204,7 +1235,7 @@ export async function syncSubscriptionFromOpera(
       updated_at: appDb.fn.now(),
     });
 
-  const fresh = await getSubscription(appDb, id);
+  const fresh = await getSubscription(appDb, companyCode, id);
   return {
     success: true,
     old_amount_pence: oldAmountPence,
@@ -1226,6 +1257,7 @@ export interface LinkSubscriptionInput {
 
 export async function linkSubscriptionToDocument(
   appDb: Knex,
+  companyCode: string,
   input: LinkSubscriptionInput,
 ): Promise<SubscriptionLifecycleResponse> {
   const subId = (input.subscriptionId ?? '').trim();
@@ -1280,7 +1312,7 @@ export async function linkSubscriptionToDocument(
   } catch (err: any) {
     return { success: false, error: err?.message ?? String(err) };
   }
-  const fresh = await getSubscription(appDb, subId);
+  const fresh = await getSubscription(appDb, companyCode, subId);
   if (!fresh.success) {
     return { success: false, error: fresh.error };
   }
@@ -1294,6 +1326,7 @@ export interface UnlinkSubscriptionInput {
 
 export async function unlinkSubscriptionFromDocument(
   appDb: Knex,
+  companyCode: string,
   input: UnlinkSubscriptionInput,
 ): Promise<SubscriptionLifecycleResponse> {
   const subId = (input.subscriptionId ?? '').trim();
@@ -1322,7 +1355,7 @@ export async function unlinkSubscriptionFromDocument(
       .where({ subscription_id: subId })
       .delete();
   }
-  const fresh = await getSubscription(appDb, subId);
+  const fresh = await getSubscription(appDb, companyCode, subId);
   if (!fresh.success) {
     return { success: false, error: fresh.error };
   }

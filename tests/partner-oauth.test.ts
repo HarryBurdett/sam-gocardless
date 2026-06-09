@@ -9,6 +9,8 @@ import {
   partnerCallbackHtml,
 } from '../src/services/partner.js';
 
+const TEST_COMPANY = 'C';
+
 interface SignupRow {
   id: number;
   company_name: string | null;
@@ -314,14 +316,14 @@ describe('createPartnerClientFromSettings', () => {
 describe('initiatePartnerSignup', () => {
   it('rejects missing email', async () => {
     const db = makeAppDb({ settings: {}, signups: [], nextId: 1 });
-    const r = await initiatePartnerSignup(db, { companyEmail: '' });
+    const r = await initiatePartnerSignup(db, TEST_COMPANY, { companyEmail: '' });
     expect(r.success).toBe(false);
     expect(r.error).toMatch(/email is required/);
   });
 
   it('returns next_step=manual when no partner credentials', async () => {
     const db = makeAppDb({ settings: {}, signups: [], nextId: 1 });
-    const r = await initiatePartnerSignup(db, {
+    const r = await initiatePartnerSignup(db, TEST_COMPANY, {
       companyEmail: 'foo@example.com',
     });
     expect(r.success).toBe(true);
@@ -340,7 +342,7 @@ describe('initiatePartnerSignup', () => {
       signups: [],
       nextId: 1,
     };
-    const r = await initiatePartnerSignup(makeAppDb(state), {
+    const r = await initiatePartnerSignup(makeAppDb(state), TEST_COMPANY, {
       companyEmail: 'foo@example.com',
       companyName: 'Foo Ltd',
       baseUrl: 'https://app.example.com',
@@ -380,7 +382,7 @@ describe('handlePartnerCallback', () => {
   }
 
   it('returns Signup Error when GoCardless returned ?error', async () => {
-    const r = await handlePartnerCallback(makeAppDb(withSettings()), {
+    const r = await handlePartnerCallback(makeAppDb(withSettings()), TEST_COMPANY, {
       error: 'access_denied',
     });
     expect(r.ok).toBe(false);
@@ -389,7 +391,7 @@ describe('handlePartnerCallback', () => {
   });
 
   it('returns Missing Code when no ?code', async () => {
-    const r = await handlePartnerCallback(makeAppDb(withSettings()), {});
+    const r = await handlePartnerCallback(makeAppDb(withSettings()), TEST_COMPANY, {});
     expect(r.ok).toBe(false);
     expect(r.title).toBe('Missing Code');
   });
@@ -397,6 +399,7 @@ describe('handlePartnerCallback', () => {
   it('returns Not Configured when partner credentials missing', async () => {
     const r = await handlePartnerCallback(
       makeAppDb({ settings: {}, signups: [], nextId: 1 }),
+      TEST_COMPANY,
       { code: 'CODE' },
     );
     expect(r.ok).toBe(false);
@@ -420,7 +423,7 @@ describe('handlePartnerCallback', () => {
       completed_at: null,
       updated_at: null,
     });
-    const r = await handlePartnerCallback(makeAppDb(state), {
+    const r = await handlePartnerCallback(makeAppDb(state), TEST_COMPANY, {
       code: 'CODE',
       state: 'TOKEN-B',
     });
@@ -471,6 +474,7 @@ describe('handlePartnerCallback', () => {
 
     const r = await handlePartnerCallback(
       makeAppDb(state),
+      TEST_COMPANY,
       { code: 'CODE', state: 'STATE-OK', baseUrl: 'https://app.example.com' },
       fakeFetch as any,
     );
@@ -507,6 +511,7 @@ describe('handlePartnerCallback', () => {
     });
     const r = await handlePartnerCallback(
       makeAppDb(state),
+      TEST_COMPANY,
       { code: 'CODE', state: 'STATE' },
       fakeFetch as any,
     );

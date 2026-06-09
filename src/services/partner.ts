@@ -15,6 +15,11 @@
  * Token redaction: `merchant_access_token` is NEVER returned to the
  * frontend — the response gets a `has_token: bool` instead.
  */
+// TODO(multi-company): the gocardless_partner_signups table queries
+// below do not yet filter by company_code. A follow-up migration
+// (planned 009_partner_signups_company_code.ts) will add the column;
+// once it lands, every appDb('gocardless_partner_signups') query in
+// this file must be updated to use companyScope(companyCode).
 import type { Knex } from 'knex';
 import { randomBytes } from 'node:crypto';
 import {
@@ -149,10 +154,11 @@ export interface GetPartnerConfigOptions {
 
 export async function getPartnerConfig(
   appDb: Knex,
+  companyCode: string,
   opts: GetPartnerConfigOptions = {},
 ): Promise<PartnerConfigResponse> {
   try {
-    const settings = await loadSettings(appDb);
+    const settings = await loadSettings(appDb, companyCode);
     const hasPartner = !!(
       settings.partner_client_id && settings.partner_client_secret
     );
@@ -184,6 +190,7 @@ export async function getPartnerConfig(
 
 export async function getLatestPartnerSignup(
   appDb: Knex,
+  companyCode: string,
 ): Promise<SignupStatusResponse> {
   try {
     const row = (await appDb('gocardless_partner_signups')
@@ -204,6 +211,7 @@ export async function getLatestPartnerSignup(
 
 export async function getAllMerchantSignups(
   appDb: Knex,
+  companyCode: string,
   opts: { status?: string | null } = {},
 ): Promise<MerchantsResponse> {
   try {
@@ -224,10 +232,11 @@ export async function getAllMerchantSignups(
 
 export async function partnerAdminAuth(
   appDb: Knex,
+  companyCode: string,
   password: string,
 ): Promise<AdminAuthResponse> {
   try {
-    const settings = await loadSettings(appDb);
+    const settings = await loadSettings(appDb, companyCode);
     const stored = (
       (settings as GoCardlessSettings & { partner_admin_password?: string })
         .partner_admin_password ?? ''
@@ -261,6 +270,7 @@ export interface UpdateMerchantAppUrlResponse {
 
 export async function updateMerchantAppUrl(
   appDb: Knex,
+  companyCode: string,
   input: UpdateMerchantAppUrlInput,
 ): Promise<UpdateMerchantAppUrlResponse> {
   if (!input.signupId) {
@@ -304,6 +314,7 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
 
 export async function activateMerchant(
   appDb: Knex,
+  companyCode: string,
   input: ActivateMerchantInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ActivateMerchantResponse> {
@@ -350,12 +361,12 @@ export async function activateMerchant(
 
     if (isLocal) {
       // Deploy locally — write to our own settings (api_access_token)
-      const existingSettings = await loadSettings(appDb);
+      const existingSettings = await loadSettings(appDb, companyCode);
       const merged: GoCardlessSettings = {
         ...existingSettings,
         api_access_token: token,
       };
-      const ok = await saveSettings(appDb, merged);
+      const ok = await saveSettings(appDb, companyCode, merged);
       if (!ok) return { success: false, error: 'Failed to save local settings' };
     } else {
       // Deploy remotely — push token to merchant's deploy-token endpoint
@@ -434,6 +445,7 @@ export interface DeployTokenResponse {
 
 export async function deployToken(
   appDb: Knex,
+  companyCode: string,
   input: DeployTokenInput,
 ): Promise<DeployTokenResponse> {
   const token = (input.access_token ?? '').trim();
@@ -441,12 +453,12 @@ export async function deployToken(
     return { success: false, error: 'No token provided' };
   }
   try {
-    const existing = await loadSettings(appDb);
+    const existing = await loadSettings(appDb, companyCode);
     const merged: GoCardlessSettings = {
       ...existing,
       api_access_token: token,
     };
-    const ok = await saveSettings(appDb, merged);
+    const ok = await saveSettings(appDb, companyCode, merged);
     if (!ok) return { success: false, error: 'Failed to save settings' };
     return {
       success: true,
@@ -487,6 +499,7 @@ function urlSafeToken(byteLen: number = 32): string {
 
 export async function initiatePartnerSignup(
   appDb: Knex,
+  companyCode: string,
   input: InitiateSignupInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<InitiateSignupResponse> {
@@ -497,7 +510,7 @@ export async function initiatePartnerSignup(
   }
 
   try {
-    const settings = await loadSettings(appDb);
+    const settings = await loadSettings(appDb, companyCode);
     const partnerClient = createPartnerClientFromSettings(settings, fetchImpl);
     const stateToken = urlSafeToken();
 
@@ -576,6 +589,7 @@ export interface PartnerCallbackResult {
 
 export async function handlePartnerCallback(
   appDb: Knex,
+  companyCode: string,
   input: PartnerCallbackInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PartnerCallbackResult> {
@@ -596,7 +610,7 @@ export async function handlePartnerCallback(
   }
 
   try {
-    const settings = await loadSettings(appDb);
+    const settings = await loadSettings(appDb, companyCode);
     const partnerClient = createPartnerClientFromSettings(settings, fetchImpl);
     if (!partnerClient) {
       return {
@@ -712,6 +726,7 @@ export function partnerCallbackHtml(result: PartnerCallbackResult): string {
 
 export async function setPartnerAdminPassword(
   appDb: Knex,
+  companyCode: string,
   newPassword: string,
 ): Promise<AdminPasswordResponse> {
   const trimmed = (newPassword ?? '').trim();
@@ -719,12 +734,12 @@ export async function setPartnerAdminPassword(
     return { success: false, error: 'Password must be at least 4 characters' };
   }
   try {
-    const settings = await loadSettings(appDb);
+    const settings = await loadSettings(appDb, companyCode);
     const merged = {
       ...settings,
       partner_admin_password: trimmed,
     } as GoCardlessSettings & { partner_admin_password: string };
-    const ok = await saveSettings(appDb, merged);
+    const ok = await saveSettings(appDb, companyCode, merged);
     if (!ok) return { success: false, error: 'Failed to save' };
     return { success: true };
   } catch (err: any) {

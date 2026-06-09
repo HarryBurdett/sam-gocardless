@@ -11,28 +11,43 @@ import {
 } from '../src/services/settings.js';
 
 /**
- * Mock Knex with a single in-memory settings table.
+ * Mock Knex with an in-memory settings table that respects the
+ * (key, company_code) composite key introduced in migration 008.
+ *
+ * Rows are stored keyed by `${key}|${company_code}` so multiple
+ * companies can each own their own gocardless_settings row, matching
+ * the real schema after migration 008.
  */
 function makeMockDb(): any {
-  const store = new Map<string, { key: string; value: string; updated_at: Date }>();
+  const store = new Map<
+    string,
+    { key: string; company_code: string; value: string; updated_at: Date }
+  >();
+  const rowKey = (k: string, c: string) => `${k}|${c}`;
 
   const db: any = (table: string) => {
     if (table !== 'settings') {
       throw new Error(`Unexpected table: ${table}`);
     }
-    let whereClause: { key?: string } = {};
+    let whereClause: { key?: string; company_code?: string } = {};
     const builder: any = {
       where: (col: string | Record<string, unknown>, _val?: unknown) => {
         if (typeof col === 'object') Object.assign(whereClause, col);
         else if (_val !== undefined) (whereClause as any)[col] = _val;
         return builder;
       },
-      first: async () => (whereClause.key ? store.get(whereClause.key) ?? null : null),
+      first: async () => {
+        if (whereClause.key && whereClause.company_code !== undefined) {
+          return store.get(rowKey(whereClause.key, whereClause.company_code)) ?? null;
+        }
+        return null;
+      },
       update: async (patch: Record<string, unknown>) => {
-        if (whereClause.key) {
-          const existing = store.get(whereClause.key);
+        if (whereClause.key && whereClause.company_code !== undefined) {
+          const k = rowKey(whereClause.key, whereClause.company_code);
+          const existing = store.get(k);
           if (existing) {
-            store.set(whereClause.key, {
+            store.set(k, {
               ...existing,
               value: String(patch.value),
               updated_at: new Date(),
@@ -42,8 +57,11 @@ function makeMockDb(): any {
         return 1;
       },
       insert: async (row: Record<string, unknown>) => {
-        store.set(String(row.key), {
-          key: String(row.key),
+        const k = String(row.key);
+        const c = String(row.company_code ?? '');
+        store.set(rowKey(k, c), {
+          key: k,
+          company_code: c,
           value: String(row.value),
           updated_at: new Date(),
         });
@@ -57,10 +75,17 @@ function makeMockDb(): any {
   return db;
 }
 
+// Per-company isolation behaviour is covered by
+// settings-company-isolation.test.ts (against a real SQLite DB with
+// migration 008 applied). The tests here exercise the same surface
+// against the mock — every call now threads a `companyCode` through
+// to match the post-migration-008 service signature.
+const TEST_COMPANY = 'C';
+
 describe('loadSettings', () => {
   it('returns defaults when no row exists', async () => {
     const db = makeMockDb();
-    const settings = await loadSettings(db);
+    const settings = await loadSettings(db, TEST_COMPANY);
     expect(settings.subscription_tag).toBe('SUB');
     expect(settings.fees_vat_code).toBe('1');
     expect(settings.subscription_frequencies).toEqual(['W', 'M', 'A']);
@@ -73,9 +98,9 @@ describe('loadSettings', () => {
       default_bank_code: 'BC010',
       api_access_token: 'sandbox_test_token',
     };
-    await saveSettings(db, { ...stored } as GoCardlessSettings);
+    await saveSettings(db, TEST_COMPANY, { ...stored } as GoCardlessSettings);
 
-    const loaded = await loadSettings(db);
+    const loaded = await loadSettings(db, TEST_COMPANY);
     expect(loaded.default_batch_type).toBe('GoCardless');
     expect(loaded.default_bank_code).toBe('BC010');
     expect(loaded.api_access_token).toBe('sandbox_test_token');

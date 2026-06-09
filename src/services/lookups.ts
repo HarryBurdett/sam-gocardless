@@ -329,11 +329,12 @@ export interface SetupStatusResponse {
 
 export async function getSetupStatus(
   appDb: Knex | null,
+  companyCode: string,
 ): Promise<SetupStatusResponse> {
   let settings: GoCardlessSettings | null = null;
   if (appDb) {
     try {
-      settings = await loadSettings(appDb);
+      settings = await loadSettings(appDb, companyCode);
     } catch {
       // No settings = not configured
     }

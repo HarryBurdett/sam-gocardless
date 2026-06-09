@@ -7,11 +7,18 @@
  * Storage change (intentional, not a behavioural amendment): in Python
  * the settings live in a per-company JSON file
  * (`data/{company}/gocardless/gocardless_settings.json`); under SAM the
- * plugin owns its own per-tenant database (`ai_sam_app_gocardless`),
- * so we promote settings to a single-row key/value table. The dict
- * structure and field semantics are unchanged.
+ * plugin owns ONE database per (connection, app) and each row is
+ * discriminated by `company_code` (single-letter Opera company code).
+ * The dict structure and field semantics are unchanged.
+ *
+ * 2026-06-09: load/save now REQUIRE a non-empty companyCode. Migration
+ * 008 added the company_code column and a composite UNIQUE on
+ * (key, company_code); callers must thread the active Opera company
+ * through every read and write or the call fails loudly (companyScope
+ * throws). See src/_shared/get-company.ts for the rationale.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface GoCardlessSettings {
   default_batch_type: string;
@@ -66,10 +73,18 @@ const DEFAULTS: GoCardlessSettings = {
 const SETTINGS_KEY = 'gocardless_settings';
 
 /**
- * Load the GoCardless settings dict. If no row exists yet, return defaults.
+ * Load the GoCardless settings dict for one Opera company. If no row
+ * exists yet for this company, return defaults.
+ *
+ * @throws Error if companyCode is empty — see companyScope().
  */
-export async function loadSettings(db: Knex): Promise<GoCardlessSettings> {
-  const row = await db('settings').where({ key: SETTINGS_KEY }).first();
+export async function loadSettings(
+  db: Knex,
+  companyCode: string,
+): Promise<GoCardlessSettings> {
+  const row = await db('settings')
+    .where({ ...companyScope(companyCode), key: SETTINGS_KEY })
+    .first();
   if (!row?.value) return { ...DEFAULTS };
   try {
     const parsed = JSON.parse(row.value) as Partial<GoCardlessSettings>;
@@ -80,25 +95,35 @@ export async function loadSettings(db: Knex): Promise<GoCardlessSettings> {
 }
 
 /**
- * Save (replace) the GoCardless settings dict.
+ * Save (replace) the GoCardless settings dict for one Opera company.
  *
  * The Python `_save_gocardless_settings` writes the full dict to disk —
  * we mirror that with an upsert. Callers that need merge semantics
  * (the POST endpoint) load → merge → save.
+ *
+ * @throws Error if companyCode is empty — see companyScope().
  */
 export async function saveSettings(
   db: Knex,
+  companyCode: string,
   settings: GoCardlessSettings,
 ): Promise<boolean> {
   const value = JSON.stringify(settings);
-  const existing = await db('settings').where({ key: SETTINGS_KEY }).first();
+  const scope = companyScope(companyCode);
+  const existing = await db('settings')
+    .where({ ...scope, key: SETTINGS_KEY })
+    .first();
   try {
     if (existing) {
       await db('settings')
-        .where({ key: SETTINGS_KEY })
+        .where({ ...scope, key: SETTINGS_KEY })
         .update({ value, updated_at: db.fn.now() });
     } else {
-      await db('settings').insert({ key: SETTINGS_KEY, value });
+      await db('settings').insert({
+        ...scope,
+        key: SETTINGS_KEY,
+        value,
+      });
     }
     return true;
   } catch {

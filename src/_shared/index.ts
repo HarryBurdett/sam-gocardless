@@ -17,3 +17,10 @@ export {
   executeWithDeadlockRetry,
   isDeadlockError,
 } from './deadlock-retry.js';
+export {
+  companyScope,
+  companyScopeSoft,
+  unscopedDanger,
+  companyScopeForTesting,
+  COMPANY_SCOPE_SENTINEL,
+} from './get-company.js';

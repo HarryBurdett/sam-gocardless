@@ -10,6 +10,8 @@ import {
   deployToken,
 } from '../src/services/partner.js';
 
+const TEST_COMPANY = 'C';
+
 interface SignupRow {
   id: number;
   company_name: string | null;
@@ -135,7 +137,7 @@ describe('getPartnerConfig', () => {
       },
       signups: [],
     });
-    const result = await getPartnerConfig(db);
+    const result = await getPartnerConfig(db, TEST_COMPANY);
     expect(result.partner_configured).toBe(true);
     expect(result.partner_sandbox).toBe(true);
     expect(result.redirect_uri).toBe('https://app.example.com/cb');
@@ -146,7 +148,7 @@ describe('getPartnerConfig', () => {
       settings: { partner_client_id: 'CID' },
       signups: [],
     });
-    const result = await getPartnerConfig(db);
+    const result = await getPartnerConfig(db, TEST_COMPANY);
     expect(result.partner_configured).toBe(false);
   });
 
@@ -155,7 +157,7 @@ describe('getPartnerConfig', () => {
       settings: { partner_client_id: 'CID', partner_client_secret: 'SEC' },
       signups: [],
     });
-    const result = await getPartnerConfig(db, {
+    const result = await getPartnerConfig(db, TEST_COMPANY, {
       baseUrl: 'https://app.example.com',
     });
     expect(result.redirect_uri).toBe(
@@ -168,7 +170,7 @@ describe('getPartnerConfig', () => {
       settings: { partner_client_id: 'CID', partner_client_secret: 'SEC' },
       signups: [],
     });
-    const result = await getPartnerConfig(db, {
+    const result = await getPartnerConfig(db, TEST_COMPANY, {
       baseUrl: 'https://app.example.com/',
     });
     expect(result.redirect_uri).toBe(
@@ -181,7 +183,7 @@ describe('getPartnerConfig', () => {
       throw new Error('settings table missing');
     };
     failing.fn = { now: () => 'NOW()' };
-    const result = await getPartnerConfig(failing);
+    const result = await getPartnerConfig(failing, TEST_COMPANY);
     expect(result.success).toBe(false);
   });
 });
@@ -189,7 +191,7 @@ describe('getPartnerConfig', () => {
 describe('getLatestPartnerSignup', () => {
   it('returns null when no signups recorded', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await getLatestPartnerSignup(db);
+    const result = await getLatestPartnerSignup(db, TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.signup).toBeNull();
   });
@@ -238,7 +240,7 @@ describe('getLatestPartnerSignup', () => {
         },
       ],
     });
-    const result = await getLatestPartnerSignup(db);
+    const result = await getLatestPartnerSignup(db, TEST_COMPANY);
     expect(result.signup?.id).toBe(2);
     // Confirm the response shape doesn't have merchant_access_token
     expect(JSON.stringify(result.signup)).not.toContain('SECRET-TOKEN');
@@ -272,7 +274,7 @@ describe('getLatestPartnerSignup', () => {
         },
       ],
     });
-    const result = await getLatestPartnerSignup(db);
+    const result = await getLatestPartnerSignup(db, TEST_COMPANY);
     expect(result.signup?.has_token).toBe(true);
   });
 });
@@ -324,7 +326,7 @@ describe('getAllMerchantSignups', () => {
         },
       ],
     });
-    const result = await getAllMerchantSignups(db);
+    const result = await getAllMerchantSignups(db, TEST_COMPANY);
     expect(result.merchants).toHaveLength(2);
     expect(result.merchants[0]?.id).toBe(2);
     expect(result.merchants[1]?.id).toBe(1);
@@ -375,7 +377,7 @@ describe('getAllMerchantSignups', () => {
         },
       ],
     });
-    const result = await getAllMerchantSignups(db, { status: 'completed' });
+    const result = await getAllMerchantSignups(db, TEST_COMPANY, { status: 'completed' });
     expect(result.merchants).toHaveLength(1);
     expect(result.merchants[0]?.id).toBe(1);
   });
@@ -384,7 +386,7 @@ describe('getAllMerchantSignups', () => {
 describe('partnerAdminAuth', () => {
   it('first_time=true when no password set', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await partnerAdminAuth(db, 'anything');
+    const result = await partnerAdminAuth(db, TEST_COMPANY, 'anything');
     expect(result.success).toBe(true);
     expect(result.first_time).toBe(true);
   });
@@ -394,7 +396,7 @@ describe('partnerAdminAuth', () => {
       settings: { partner_admin_password: 'correct' },
       signups: [],
     });
-    const result = await partnerAdminAuth(db, 'wrong');
+    const result = await partnerAdminAuth(db, TEST_COMPANY, 'wrong');
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/Incorrect/);
   });
@@ -404,7 +406,7 @@ describe('partnerAdminAuth', () => {
       settings: { partner_admin_password: 'sekret' },
       signups: [],
     });
-    const result = await partnerAdminAuth(db, 'sekret');
+    const result = await partnerAdminAuth(db, TEST_COMPANY, 'sekret');
     expect(result.success).toBe(true);
     expect(result.first_time).toBeUndefined();
   });
@@ -413,7 +415,7 @@ describe('partnerAdminAuth', () => {
 describe('updateMerchantAppUrl', () => {
   it('rejects missing signupId', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await updateMerchantAppUrl(db, { signupId: 0, appUrl: 'x' });
+    const result = await updateMerchantAppUrl(db, TEST_COMPANY, { signupId: 0, appUrl: 'x' });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/No signup ID/);
   });
@@ -434,7 +436,7 @@ describe('updateMerchantAppUrl', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await updateMerchantAppUrl(db, {
+    const result = await updateMerchantAppUrl(db, TEST_COMPANY, {
       signupId: 1,
       appUrl: 'https://x.com/app/',
     });
@@ -444,7 +446,7 @@ describe('updateMerchantAppUrl', () => {
 
   it('returns "Signup record not found" when no row updated', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await updateMerchantAppUrl(db, {
+    const result = await updateMerchantAppUrl(db, TEST_COMPANY, {
       signupId: 999,
       appUrl: 'https://x.com',
     });
@@ -470,13 +472,13 @@ describe('activateMerchant', () => {
 
   it('rejects missing signupId', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await activateMerchant(db, { signupId: 0 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 0 });
     expect(result.success).toBe(false);
   });
 
   it('returns "Signup record not found" when row missing', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await activateMerchant(db, { signupId: 99 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 99 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
@@ -486,7 +488,7 @@ describe('activateMerchant', () => {
       settings: {},
       signups: [makeSignup({ merchant_access_token: null })],
     });
-    const result = await activateMerchant(db, { signupId: 1 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/No access token/);
   });
@@ -496,7 +498,7 @@ describe('activateMerchant', () => {
       settings: {},
       signups: [makeSignup({ merchant_app_url: '' })],
     });
-    const result = await activateMerchant(db, { signupId: 1 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/No app URL/);
   });
@@ -507,7 +509,7 @@ describe('activateMerchant', () => {
       signups: [makeSignup({ merchant_app_url: 'http://localhost:3000' })],
     };
     const db = makeAppDb(state);
-    const result = await activateMerchant(db, { signupId: 1 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 1 });
     expect(result.success).toBe(true);
     expect((state.settings as any).api_access_token).toBe('TKN-123');
     expect(state.signups[0]?.status).toBe('activated');
@@ -533,6 +535,7 @@ describe('activateMerchant', () => {
     const db = makeAppDb(state);
     const result = await activateMerchant(
       db,
+      TEST_COMPANY,
       { signupId: 1 },
       fakeFetch as any,
     );
@@ -561,6 +564,7 @@ describe('activateMerchant', () => {
       } as Response);
     const result = await activateMerchant(
       makeAppDb(state),
+      TEST_COMPANY,
       { signupId: 1 },
       fakeFetch as any,
     );
@@ -582,6 +586,7 @@ describe('activateMerchant', () => {
       } as Response);
     const result = await activateMerchant(
       makeAppDb(state),
+      TEST_COMPANY,
       { signupId: 1 },
       fakeFetch as any,
     );
@@ -594,7 +599,7 @@ describe('activateMerchant', () => {
       settings: {},
       signups: [makeSignup({ merchant_app_url: 'not a url' })],
     });
-    const result = await activateMerchant(db, { signupId: 1 });
+    const result = await activateMerchant(db, TEST_COMPANY, { signupId: 1 });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/Invalid app URL/);
   });
@@ -603,14 +608,14 @@ describe('activateMerchant', () => {
 describe('deployToken', () => {
   it('rejects missing token', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await deployToken(db, { access_token: '' });
+    const result = await deployToken(db, TEST_COMPANY, { access_token: '' });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/No token/);
   });
 
   it('saves token to settings.api_access_token', async () => {
     const state: MockState = { settings: {}, signups: [] };
-    const result = await deployToken(makeAppDb(state), {
+    const result = await deployToken(makeAppDb(state), TEST_COMPANY, {
       access_token: 'NEW-TOKEN',
       company_name: 'Acme Ltd',
     });
@@ -623,21 +628,21 @@ describe('deployToken', () => {
 describe('setPartnerAdminPassword', () => {
   it('rejects passwords shorter than 4 characters', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await setPartnerAdminPassword(db, 'abc');
+    const result = await setPartnerAdminPassword(db, TEST_COMPANY, 'abc');
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/at least 4/);
   });
 
   it('rejects empty password', async () => {
     const db = makeAppDb({ settings: {}, signups: [] });
-    const result = await setPartnerAdminPassword(db, '   ');
+    const result = await setPartnerAdminPassword(db, TEST_COMPANY, '   ');
     expect(result.success).toBe(false);
   });
 
   it('saves valid password', async () => {
     const state: MockState = { settings: {}, signups: [] };
     const db = makeAppDb(state);
-    const result = await setPartnerAdminPassword(db, 'newpassword');
+    const result = await setPartnerAdminPassword(db, TEST_COMPANY, 'newpassword');
     expect(result.success).toBe(true);
     expect((state.settings as any).partner_admin_password).toBe('newpassword');
   });

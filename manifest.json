@@ -2,7 +2,7 @@
   "id": "gocardless",
   "name": "GoCardless Import",
   "description": "GoCardless Direct Debit payout import. Scans the customer's mailbox for payout notification emails, matches payments to customers, and posts as sales receipts to Opera.",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "author": "IntSys",
   "category": "finance",
   "type": "full-stack",
