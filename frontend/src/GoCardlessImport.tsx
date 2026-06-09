@@ -258,15 +258,34 @@ export function GoCardlessImport() {
 }
 
 function GoCardlessImportInner() {
-  // Fetch current company for storage key isolation
+  // Fetch current company for storage key isolation.
+  //
+  // staleTime + gcTime = 0 so a company switch (which navigates to
+  // /login.html and back) always re-fetches the current_company
+  // value before any sessionStorage restore decisions are made.
+  // Without this, React Query could replay a previous session's
+  // company id and the wizard would restore the wrong company's
+  // batches under the new company's UI (silent cross-company leak).
   const { data: companiesData } = useQuery({
     queryKey: ['companies'],
     queryFn: async () => {
       const res = await authFetch('/api/companies');
       return res.json();
     },
+    staleTime: 0,
+    gcTime: 0,
   });
   const currentCompanyId = companiesData?.current_company?.id || '';
+
+  // One-time sweep: in earlier builds, if /api/companies failed (e.g.
+  // running outside SAM without a compat endpoint), the wizard wrote
+  // sessionStorage under the empty-suffix key `gocardless_batches_`
+  // shared across every company. Remove any such legacy entry so it
+  // can't replay into a per-company restore by accident.
+  useEffect(() => {
+    sessionStorage.removeItem('gocardless_batches_');
+    sessionStorage.removeItem('gocardless_scanStats_');
+  }, []);
 
   // Fetch Opera config to determine which version to use
   const { data: operaConfigData } = useQuery({
