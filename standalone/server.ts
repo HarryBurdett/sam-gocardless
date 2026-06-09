@@ -228,6 +228,25 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
     });
   });
 
+  // SPA-fallback compatibility endpoint — the wizard derives its
+  // sessionStorage cache key from `/api/companies`'s `current_company.id`
+  // field. In standalone (single-company-per-session), that's just
+  // the session-selected company. Without this endpoint, the wizard's
+  // fallback empty string was used as the key for EVERY company,
+  // which silently leaked one company's cached batches into another's
+  // UI on switch. SAM provides this endpoint at the portal level.
+  app.get('/api/companies', (req: Request, res: Response) => {
+    const code = req.standaloneCompany;
+    if (!code) {
+      res.status(400).json({ error: 'no company in session' });
+      return;
+    }
+    res.json({
+      companies: [{ id: code, name: code }],
+      current_company: { id: code, name: code },
+    });
+  });
+
   // SPA-fallback compatibility endpoint — the GoCardless wizard's
   // customer-dropdown loader hits `/api/bank-import/accounts/customers`
   // (the bank-reconcile plugin's customer list in SAM). In standalone
