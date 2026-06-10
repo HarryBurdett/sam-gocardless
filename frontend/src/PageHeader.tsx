@@ -3,24 +3,28 @@ import type { ReactNode } from 'react';
 /**
  * Single source of truth for the version label rendered next to
  * every page header (e.g. "GoCardless Import - Live Version 1.4").
- * Bump on each release.
  *
- * 1.4 — Phase B2+B3 of per-company isolation: migration 009 +
- *       companyCode plumbed through every remaining per-company
- *       table — gocardless_mandates, gocardless_imports,
- *       mandate_setup_requests, gocardless_payment_requests,
- *       gocardless_subscriptions, gocardless_subscription_documents,
- *       gocardless_partner_signups. Cross-tenant isolation is now
- *       complete across the entire plugin.
+ * The value is injected at BUILD TIME by Vite via the `define`
+ * block in vite.config.ts, which reads `package.json#version`.
+ * Future releases only need to bump package.json + manifest.json
+ * — this label updates automatically. No more three-place edits.
  *
- * 1.2 — Phase A: cross-company settings isolation (migration 008 +
- *       companyScope fail-loud helper + companyCode plumbed through
- *       loadSettings/saveSettings and every (appDb)-only helper).
- *       Plus earlier production fixes: cross-pstid ntran balance
- *       check (f2d8fa2) and defensive sessionStorage scoping
- *       (1481dbe).
+ * Falls back to 'dev' when the global isn't defined (e.g. running
+ * a non-Vite test harness directly against the source).
+ *
+ * Display form is `major.minor` (e.g. "1.4") to match the existing
+ * label convention. The full semver remains in __APP_VERSION__ if
+ * a more precise display is ever wanted.
  */
-export const LIVE_VERSION = '1.4';
+declare const __APP_VERSION__: string | undefined;
+
+const FULL_VERSION =
+  typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+
+export const LIVE_VERSION =
+  FULL_VERSION === 'dev'
+    ? 'dev'
+    : FULL_VERSION.split('.').slice(0, 2).join('.');
 
 interface PageHeaderProps {
   icon: React.ComponentType<{ className?: string }>;

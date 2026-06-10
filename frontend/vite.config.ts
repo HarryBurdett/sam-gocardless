@@ -12,10 +12,28 @@
  */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Read the version from the plugin's root package.json so the
+ * "Live Version" label in the UI auto-updates on every release —
+ * no more hand-editing PageHeader.tsx in lockstep with package.json
+ * and manifest.json.
+ */
+const pkg = JSON.parse(
+  readFileSync(resolve(__dirname, '..', 'package.json'), 'utf-8'),
+) as { version: string };
 
 export default defineConfig({
   base: './',
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   build: {
     sourcemap: true,
     minify: 'esbuild',
