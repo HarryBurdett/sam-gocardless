@@ -68,6 +68,8 @@ function makeOperaDb(names: Array<{ sn_account: string; sn_name: string }>): any
   return db;
 }
 
+const TEST_COMPANY = 'C';
+
 describe('getImportHistory', () => {
   it('returns past imports parsed and dated', async () => {
     const appDb = makeAppDb({
@@ -95,22 +97,22 @@ describe('getImportHistory', () => {
     });
     const operaDb = makeOperaDb([{ sn_account: 'ACME', sn_name: 'Acme Ltd' }]);
 
-    const result = await getImportHistory(appDb, operaDb);
+    const result = await getImportHistory(appDb, TEST_COMPANY, operaDb);
 
     expect(result.success).toBe(true);
-    expect(result.count).toBe(1);
-    expect(result.history[0]?.bank_reference).toBe('INTSYS-ABC123');
-    expect(result.history[0]?.gross_amount).toBe(1500);
+    expect(result.total).toBe(1);
+    expect(result.imports[0]?.bank_reference).toBe('INTSYS-ABC123');
+    expect(result.imports[0]?.gross_amount).toBe(1500);
     // Opera enrichment applied
-    expect(result.history[0]?.payments[0]?.opera_customer_name).toBe('Acme Ltd');
+    expect(result.imports[0]?.payments[0]?.opera_customer_name).toBe('Acme Ltd');
   });
 
   it('returns empty history with count=0 when no imports', async () => {
     const appDb = makeAppDb({});
-    const result = await getImportHistory(appDb, null);
+    const result = await getImportHistory(appDb, TEST_COMPANY, null);
     expect(result.success).toBe(true);
-    expect(result.count).toBe(0);
-    expect(result.history).toEqual([]);
+    expect(result.total).toBe(0);
+    expect(result.imports).toEqual([]);
   });
 
   it('omits Opera enrichment when operaDb is null', async () => {
@@ -136,9 +138,9 @@ describe('getImportHistory', () => {
       ],
     });
 
-    const result = await getImportHistory(appDb, null);
+    const result = await getImportHistory(appDb, TEST_COMPANY, null);
     expect(result.success).toBe(true);
-    expect(result.history[0]?.payments[0]?.opera_customer_name).toBeUndefined();
+    expect(result.imports[0]?.payments[0]?.opera_customer_name).toBeUndefined();
   });
 
   it('filters by target_system (opera_se vs opera_3)', async () => {
@@ -180,8 +182,8 @@ describe('getImportHistory', () => {
         },
       ],
     });
-    const result = await getImportHistory(appDb, null, { targetSystem: 'opera_se' });
-    expect(result.count).toBe(1);
-    expect(result.history[0]?.bank_reference).toBe('SE');
+    const result = await getImportHistory(appDb, TEST_COMPANY, null, { targetSystem: 'opera_se' });
+    expect(result.total).toBe(1);
+    expect(result.imports[0]?.bank_reference).toBe('SE');
   });
 });

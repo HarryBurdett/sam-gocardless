@@ -129,6 +129,7 @@ const SAMPLE_REQUEST: ValidatedRequest = {
   transferCbtype: null,
   emailId: null,
   warnings: [],
+  inputBy: 'GOCARDLS',
 };
 
 describe('gocardlessBatchPostingExecutor', () => {
