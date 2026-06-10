@@ -10,6 +10,8 @@ import {
   findOperaCustomerMatch,
 } from '../src/services/mandates.js';
 
+const TEST_COMPANY = 'C';
+
 interface MandateRow {
   id: number;
   mandate_id: string;
@@ -38,7 +40,9 @@ function makeAppDb(state: MockState): any {
     const matches = () =>
       state.rows.filter(
         (r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v) &&
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v) &&
           neqConds.every((nc) => (r as any)[nc.col] !== nc.val),
       );
     const builder: any = {
@@ -120,7 +124,7 @@ describe('listMandates', () => {
         emptyMandate({ id: 3, mandate_id: 'M3', opera_name: 'cATco' }),
       ],
     };
-    const result = await listMandates(makeAppDb(state));
+    const result = await listMandates(makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.count).toBe(3);
     expect(result.mandates[0]?.opera_name).toBe('Acme');
@@ -135,7 +139,7 @@ describe('listMandates', () => {
         emptyMandate({ id: 2, mandate_status: 'cancelled' }),
       ],
     };
-    const result = await listMandates(makeAppDb(state), { status: 'active' });
+    const result = await listMandates(makeAppDb(state), TEST_COMPANY, { status: 'active' });
     expect(result.count).toBe(1);
     expect(result.mandates[0]?.mandate_status).toBe('active');
   });
@@ -157,7 +161,7 @@ describe('listMandates', () => {
         }),
       ],
     };
-    const result = await listMandates(makeAppDb(state));
+    const result = await listMandates(makeAppDb(state), TEST_COMPANY);
     expect(result.count).toBe(1);
     expect(result.mandates[0]?.opera_account).toBe('CUST01');
   });
@@ -173,7 +177,7 @@ describe('listMandates', () => {
         }),
       ],
     };
-    const result = await listMandates(makeAppDb(state));
+    const result = await listMandates(makeAppDb(state), TEST_COMPANY);
     expect(result.count).toBe(1);
   });
 });
@@ -195,7 +199,7 @@ describe('listUnlinkedMandates', () => {
         }),
       ],
     };
-    const result = await listUnlinkedMandates(makeAppDb(state));
+    const result = await listUnlinkedMandates(makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.count).toBe(2);
     // Sorted alphabetically by opera_name
@@ -210,7 +214,7 @@ describe('cancelMandate', () => {
       rows: [emptyMandate({ id: 1, mandate_id: 'MD_X', mandate_status: 'active' })],
     };
     const remote = async () => ({ success: true, status: 'cancelled' });
-    const result = await cancelMandate(makeAppDb(state), 'MD_X', remote);
+    const result = await cancelMandate(makeAppDb(state), TEST_COMPANY, 'MD_X', remote);
     expect(result.success).toBe(true);
     expect(result.status).toBe('cancelled');
     expect(state.rows[0]?.mandate_status).toBe('cancelled');
@@ -221,7 +225,7 @@ describe('cancelMandate', () => {
       rows: [emptyMandate({ id: 1, mandate_id: 'MD_X', mandate_status: 'active' })],
     };
     const remote = async () => ({ success: false, error: 'API error' });
-    const result = await cancelMandate(makeAppDb(state), 'MD_X', remote);
+    const result = await cancelMandate(makeAppDb(state), TEST_COMPANY, 'MD_X', remote);
     expect(result.success).toBe(false);
     expect(state.rows[0]?.mandate_status).toBe('active');
   });
@@ -229,7 +233,7 @@ describe('cancelMandate', () => {
   it('returns 404 when mandate_id not in DB', async () => {
     const state: MockState = { rows: [] };
     const remote = async () => ({ success: true, status: 'cancelled' });
-    const result = await cancelMandate(makeAppDb(state), 'MISSING', remote);
+    const result = await cancelMandate(makeAppDb(state), TEST_COMPANY, 'MISSING', remote);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
@@ -243,14 +247,14 @@ describe('cancelMandate', () => {
       status: 'cancelled',
       alreadyCancelled: true,
     });
-    const result = await cancelMandate(makeAppDb(state), 'MD_X', remote);
+    const result = await cancelMandate(makeAppDb(state), TEST_COMPANY, 'MD_X', remote);
     expect(result.success).toBe(true);
     expect(state.rows[0]?.mandate_status).toBe('cancelled');
   });
 
   it('rejects empty mandate_id', async () => {
     const state: MockState = { rows: [] };
-    const result = await cancelMandate(makeAppDb(state), '', async () => ({ success: true }));
+    const result = await cancelMandate(makeAppDb(state), TEST_COMPANY, '', async () => ({ success: true }));
     expect(result.success).toBe(false);
   });
 });
@@ -260,7 +264,7 @@ describe('unlinkMandate', () => {
     const state: MockState = {
       rows: [emptyMandate({ id: 1, mandate_id: 'MD_X', opera_account: 'CUST01' })],
     };
-    const result = await unlinkMandate(makeAppDb(state), 'MD_X');
+    const result = await unlinkMandate(makeAppDb(state), TEST_COMPANY, 'MD_X');
     expect(result.success).toBe(true);
     expect(state.rows[0]?.opera_account).toBe('__UNLINKED__');
   });
@@ -275,13 +279,13 @@ describe('unlinkMandate', () => {
         }),
       ],
     };
-    const result = await unlinkMandate(makeAppDb(state), 'MD_X');
+    const result = await unlinkMandate(makeAppDb(state), TEST_COMPANY, 'MD_X');
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
 
   it('rejects empty mandate_id', async () => {
-    const result = await unlinkMandate(makeAppDb({ rows: [] }), '');
+    const result = await unlinkMandate(makeAppDb({ rows: [] }), TEST_COMPANY, '');
     expect(result.success).toBe(false);
   });
 });
@@ -289,7 +293,7 @@ describe('unlinkMandate', () => {
 describe('linkMandate', () => {
   it('inserts a new (account, mandate) row', async () => {
     const state: MockState = { rows: [] };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: 'MD_NEW',
       operaName: 'Acme Ltd',
@@ -315,7 +319,7 @@ describe('linkMandate', () => {
         }),
       ],
     };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: 'MD1',
       mandateStatus: 'active',
@@ -338,7 +342,7 @@ describe('linkMandate', () => {
         }),
       ],
     };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: 'MD1',
       operaName: 'Acme Ltd',
@@ -361,7 +365,7 @@ describe('linkMandate', () => {
         }),
       ],
     };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: 'MD1',
     });
@@ -382,7 +386,7 @@ describe('linkMandate', () => {
         }),
       ],
     };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: 'MD1',
       confirm: true,
@@ -397,12 +401,12 @@ describe('linkMandate', () => {
 
   it('rejects empty inputs', async () => {
     const state: MockState = { rows: [] };
-    const result = await linkMandate(makeAppDb(state), {
+    const result = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: '',
       mandateId: 'X',
     });
     expect(result.success).toBe(false);
-    const result2 = await linkMandate(makeAppDb(state), {
+    const result2 = await linkMandate(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'CUST01',
       mandateId: '',
     });
@@ -470,6 +474,7 @@ describe('syncMandatesFromGocardless', () => {
     });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],
@@ -491,6 +496,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => ({ company_name: 'Acme Limited' });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [{ account: 'CUST01', name: 'Acme Ltd' }],
@@ -521,6 +527,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => ({ company_name: 'Acme Ltd' });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],
@@ -550,6 +557,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => ({ company_name: 'Beta Trading PLC' });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [{ account: 'CUST02', name: 'Beta Trading' }],
@@ -577,6 +585,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => ({ company_name: 'X' });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],
@@ -597,6 +606,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => ({ company_name: 'X' });
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],
@@ -625,6 +635,7 @@ describe('syncMandatesFromGocardless', () => {
     const fetchCustomer = async () => null;
     await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],
@@ -648,6 +659,7 @@ describe('syncMandatesFromGocardless', () => {
     };
     const result = await syncMandatesFromGocardless(
       makeAppDb(state),
+      TEST_COMPANY,
       fetchPage,
       fetchCustomer,
       [],

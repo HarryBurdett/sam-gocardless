@@ -27,6 +27,7 @@
  * Dormant filter on sname (sn_dormant=0 OR NULL) per CLAUDE.md.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 // ---------------------------------------------------------------------
 // Types
@@ -127,19 +128,23 @@ interface MandateRow {
 
 export async function matchPaymentsHelper(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex,
   payments: PaymentInput[],
 ): Promise<MatchHelperResult> {
+  const scope = companyScope(companyCode);
   try {
     // Load all mandates from per-app DB (faithful to payments_db.list_mandates())
-    const allMandates = (await appDb('gocardless_mandates').select(
-      'opera_account',
-      'opera_name',
-      'gocardless_name',
-      'gocardless_customer_id',
-      'mandate_id',
-      'mandate_status',
-    )) as unknown as MandateRow[];
+    const allMandates = (await appDb('gocardless_mandates')
+      .where({ ...scope })
+      .select(
+        'opera_account',
+        'opera_name',
+        'gocardless_name',
+        'gocardless_customer_id',
+        'mandate_id',
+        'mandate_status',
+      )) as unknown as MandateRow[];
 
     const mandateById = new Map<string, MandateRow>();
     const mandateByCustomer = new Map<string, MandateRow>();
@@ -330,7 +335,7 @@ export async function matchPaymentsHelper(
       try {
         for (const u of backfillUpdates) {
           await appDb('gocardless_mandates')
-            .where({ opera_account: u.operaAccount })
+            .where({ ...scope, opera_account: u.operaAccount })
             .andWhere((qb) => {
               qb.whereNull('gocardless_customer_id').orWhere(
                 'gocardless_customer_id',
@@ -375,11 +380,12 @@ export interface DuplicateCheckOptions {
 
 export async function matchCustomersWithDuplicateCheck(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex,
   payments: PaymentInput[],
   opts: DuplicateCheckOptions = {},
 ): Promise<MatchEndpointResult> {
-  const helperResult = await matchPaymentsHelper(appDb, operaDb, payments);
+  const helperResult = await matchPaymentsHelper(appDb, companyCode, operaDb, payments);
   if (!helperResult.success) {
     return helperResult;
   }

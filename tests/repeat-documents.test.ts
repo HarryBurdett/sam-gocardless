@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getRepeatDocuments } from '../src/services/repeat-documents.js';
 
+const TEST_COMPANY = 'C';
+
 interface IheadRow {
   ih_doc: string;
   ih_account: string;
@@ -59,7 +61,9 @@ function makeAppDb(state: MockState): any {
         },
         select: async (..._cols: string[]) => {
           return state.mandates.filter((m) =>
-            Object.entries(conds).every(([k, v]) => (m as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (m as any)[k] === v),
           );
         },
       };
@@ -67,6 +71,7 @@ function makeAppDb(state: MockState): any {
     }
     if (table === 'gocardless_subscriptions') {
       const builder: any = {
+        where: () => builder,
         select: async (..._cols: string[]) => {
           return state.subs;
         },
@@ -75,6 +80,7 @@ function makeAppDb(state: MockState): any {
     }
     if (table === 'gocardless_subscription_documents') {
       const builder: any = {
+        where: () => builder,
         select: async (..._cols: string[]) => {
           return state.links;
         },
@@ -167,7 +173,7 @@ describe('getRepeatDocuments', () => {
       subs: [],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.count).toBe(1);
     expect(result.documents[0]?.opera_account).toBe('CUST01');
@@ -187,6 +193,7 @@ describe('getRepeatDocuments', () => {
     const result = await getRepeatDocuments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { requireMandate: false },
     );
     expect(result.count).toBe(2);
@@ -206,7 +213,7 @@ describe('getRepeatDocuments', () => {
       subs: [],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.has_mandate).toBe(true);
     expect(result.documents[0]?.mandate_id).toBe('MAN1');
   });
@@ -220,7 +227,7 @@ describe('getRepeatDocuments', () => {
       subs: [],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.amount_pence).toBe(11233);
     expect(result.documents[0]?.amount_formatted).toBe('£112.33');
     expect(result.documents[0]?.ex_vat).toBeCloseTo(99.99, 2);
@@ -236,7 +243,7 @@ describe('getRepeatDocuments', () => {
       subs: [],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.frequency).toBe('Quarterly');
     expect(result.documents[0]?.interval_unit).toBe('monthly');
     expect(result.documents[0]?.interval_count).toBe(3);
@@ -259,7 +266,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [{ subscription_id: 'SUB1', source_doc: 'DOC001' }],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.has_subscription).toBe(true);
     expect(result.documents[0]?.subscription_id).toBe('SUB1');
     expect(result.with_subscription).toBe(1);
@@ -282,7 +289,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [{ subscription_id: 'SUB1', source_doc: 'DOC001' }],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.mismatch).not.toBeNull();
     expect(result.documents[0]?.mismatch?.details[0]).toMatch(/Amount/);
     expect(result.documents[0]?.mismatch?.sub_amount_pence).toBe(15000);
@@ -305,7 +312,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [{ subscription_id: 'SUB1', source_doc: 'DOC001' }],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.mismatch?.details[0]).toMatch(/Frequency/);
   });
 
@@ -326,7 +333,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.matching_subscription?.subscription_id).toBe(
       'SUB_X',
     );
@@ -348,7 +355,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.matching_subscription?.subscription_id).toBe(
       'SUB_X',
     );
@@ -369,7 +376,7 @@ describe('getRepeatDocuments', () => {
       ],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.matching_subscription).toBeNull();
   });
 
@@ -382,7 +389,7 @@ describe('getRepeatDocuments', () => {
       subs: [],
       links: [],
     };
-    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state));
+    const result = await getRepeatDocuments(makeOperaDb(state), makeAppDb(state), TEST_COMPANY);
     expect(result.documents[0]?.is_sub_tagged).toBe(true);
   });
 
@@ -398,6 +405,7 @@ describe('getRepeatDocuments', () => {
     const result = await getRepeatDocuments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { subscriptionTag: 'GCSUB' },
     );
     expect(result.documents[0]?.is_sub_tagged).toBe(true);
@@ -434,7 +442,7 @@ describe('getRepeatDocuments', () => {
       return builder;
     };
     appDb.fn = { now: () => '__NOW__' };
-    const result = await getRepeatDocuments(operaDb, appDb);
+    const result = await getRepeatDocuments(operaDb, appDb, TEST_COMPANY);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/DB unavailable/);
   });

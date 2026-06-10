@@ -12,6 +12,7 @@
  * payout twice.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface IdempotencyOptions {
   /** Optional 'opera_se' | 'opera_3' filter. */
@@ -42,13 +43,15 @@ function excludeNonImported(q: Knex.QueryBuilder): Knex.QueryBuilder {
 
 export async function isPayoutImported(
   appDb: Knex,
+  companyCode: string,
   payoutId: string,
   opts: IdempotencyOptions = {},
 ): Promise<boolean> {
+  const scope = companyScope(companyCode);
   const id = (payoutId ?? '').trim();
   if (!id) return false;
   try {
-    let q = appDb('gocardless_imports').where({ payout_id: id });
+    let q = appDb('gocardless_imports').where({ ...scope, payout_id: id });
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }
@@ -62,15 +65,17 @@ export async function isPayoutImported(
 
 export async function isReferenceImported(
   appDb: Knex,
+  companyCode: string,
   bankReference: string,
   opts: IdempotencyOptions = {},
 ): Promise<boolean> {
+  const scope = companyScope(companyCode);
   const ref = (bankReference ?? '').trim();
   if (!ref) return false;
   try {
     // Match exact OR with currency suffix like "REF (EUR)" — same
     // behaviour as the Python implementation.
-    let q = appDb('gocardless_imports').where((qb) => {
+    let q = appDb('gocardless_imports').where({ ...scope }).andWhere((qb) => {
       qb.where({ bank_reference: ref }).orWhere(
         'bank_reference',
         'like',
@@ -90,12 +95,14 @@ export async function isReferenceImported(
 
 export async function isEmailImported(
   appDb: Knex,
+  companyCode: string,
   emailId: number,
   opts: IdempotencyOptions = {},
 ): Promise<boolean> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(emailId) || emailId <= 0) return false;
   try {
-    let q = appDb('gocardless_imports').where({ email_id: emailId });
+    let q = appDb('gocardless_imports').where({ ...scope, email_id: emailId });
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }
@@ -112,10 +119,12 @@ export async function isEmailImported(
  */
 export async function getImportedEmailIds(
   appDb: Knex,
+  companyCode: string,
   opts: IdempotencyOptions = {},
 ): Promise<number[]> {
+  const scope = companyScope(companyCode);
   try {
-    let q = appDb('gocardless_imports').whereNotNull('email_id');
+    let q = appDb('gocardless_imports').where({ ...scope }).whereNotNull('email_id');
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }
@@ -137,10 +146,12 @@ export async function getImportedEmailIds(
  */
 export async function getImportedReferences(
   appDb: Knex,
+  companyCode: string,
   opts: IdempotencyOptions = {},
 ): Promise<Set<string>> {
+  const scope = companyScope(companyCode);
   try {
-    let q = appDb('gocardless_imports').whereNotNull('bank_reference');
+    let q = appDb('gocardless_imports').where({ ...scope }).whereNotNull('bank_reference');
     if (opts.targetSystem) {
       q = q.andWhere({ target_system: opts.targetSystem });
     }

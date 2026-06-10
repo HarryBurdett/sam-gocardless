@@ -4,6 +4,8 @@ import {
   deleteImportRecord,
 } from '../src/services/import-history-delete.js';
 
+const TEST_COMPANY = 'C';
+
 interface MockState {
   rows: Array<Record<string, unknown> & { id: number }>;
 }
@@ -32,8 +34,12 @@ function makeAppDb(state: MockState): any {
       delete: async () => {
         const before = state.rows.length;
         state.rows = state.rows.filter((r) => {
-          // Don't delete if filters don't match
-          if (!Object.keys(filters).every((k) => r[k] === filters[k])) {
+          // Don't delete if filters don't match (ignore company_code — fixtures don't carry it)
+          if (
+            !Object.keys(filters)
+              .filter((k) => k !== 'company_code')
+              .every((k) => r[k] === filters[k])
+          ) {
             return true;
           }
           // Date range filters
@@ -65,7 +71,7 @@ describe('clearImportHistory', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await clearImportHistory(db);
+    const result = await clearImportHistory(db, TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.deleted_count).toBe(2);
     // opera_3 row preserved
@@ -82,7 +88,7 @@ describe('clearImportHistory', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await clearImportHistory(db, {
+    const result = await clearImportHistory(db, TEST_COMPANY, {
       fromDate: '2026-04-01',
       toDate: '2026-04-30',
     });
@@ -93,7 +99,7 @@ describe('clearImportHistory', () => {
   it('reports 0 deleted when no rows match', async () => {
     const state: MockState = { rows: [] };
     const db = makeAppDb(state);
-    const result = await clearImportHistory(db);
+    const result = await clearImportHistory(db, TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.deleted_count).toBe(0);
   });
@@ -107,7 +113,7 @@ describe('deleteImportRecord', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await deleteImportRecord(db, 1);
+    const result = await deleteImportRecord(db, TEST_COMPANY, 1);
     expect(result.success).toBe(true);
     expect(result.message).toMatch(/can now be re-imported/);
     expect(state.rows).toHaveLength(0);
@@ -116,7 +122,7 @@ describe('deleteImportRecord', () => {
   it('returns Record not found when missing', async () => {
     const state: MockState = { rows: [] };
     const db = makeAppDb(state);
-    const result = await deleteImportRecord(db, 999);
+    const result = await deleteImportRecord(db, TEST_COMPANY, 999);
     expect(result.success).toBe(false);
     expect(result.error).toBe('Record not found');
   });
@@ -124,7 +130,7 @@ describe('deleteImportRecord', () => {
   it('rejects invalid id', async () => {
     const state: MockState = { rows: [] };
     const db = makeAppDb(state);
-    const result = await deleteImportRecord(db, 0);
+    const result = await deleteImportRecord(db, TEST_COMPANY, 0);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/Invalid/);
   });

@@ -39,6 +39,7 @@
  */
 import type { Knex } from 'knex';
 import { getNextId } from '../_shared/index.js';
+import { companyScope } from '../_shared/get-company.js';
 
 /**
  * Look up a payment request by GoCardless payment_id (PM...) to get
@@ -48,12 +49,14 @@ import { getNextId } from '../_shared/index.js';
  */
 async function lookupInvoiceRefsByPaymentId(
   appDb: Knex,
+  companyCode: string,
   paymentId: string,
 ): Promise<string[] | null> {
+  const scope = companyScope(companyCode);
   try {
     const row = (await appDb('gocardless_payment_requests')
       .select('invoice_refs')
-      .where({ payment_id: paymentId })
+      .where({ ...scope, payment_id: paymentId })
       .first()) as { invoice_refs?: string | null } | undefined;
     const raw = (row?.invoice_refs ?? '').toString().trim();
     if (!raw) return null;
@@ -140,6 +143,7 @@ function round2(n: number): number {
 export async function autoAllocateReceipt(
   trx: Knex,
   appDb: Knex | null,
+  companyCode: string | null,
   input: AllocateReceiptInput,
 ): Promise<AllocateReceiptResult> {
   const customer = input.customerAccount.trim();
@@ -221,10 +225,11 @@ export async function autoAllocateReceipt(
     // === RULE 0 — payment request lookup ===
     // Match against legacy lines 7124-7188. Only attempts if appDb is
     // wired and gc_payment_id supplied.
-    if (input.gcPaymentId && appDb) {
+    if (input.gcPaymentId && appDb && companyCode) {
       try {
         const refs = await lookupInvoiceRefsByPaymentId(
           appDb,
+          companyCode,
           input.gcPaymentId,
         );
         if (refs) {

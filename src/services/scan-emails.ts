@@ -139,6 +139,7 @@ function batchPaymentDateString(batch: GoCardlessBatch): string | null {
 export async function scanGocardlessEmails(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   mailbox: EmailMailboxAdapter,
   input: ScanEmailsInput,
 ): Promise<ScanEmailsResponse> {
@@ -169,8 +170,8 @@ export async function scanGocardlessEmails(
   let importedEmailIds = new Set<number>();
   let importedReferences = new Set<string>();
   if (!input.includeProcessed) {
-    importedEmailIds = new Set(await getImportedEmailIds(appDb));
-    importedReferences = await getImportedReferences(appDb);
+    importedEmailIds = new Set(await getImportedEmailIds(appDb, companyCode));
+    importedReferences = await getImportedReferences(appDb, companyCode);
   }
 
   const list = await mailbox.list({

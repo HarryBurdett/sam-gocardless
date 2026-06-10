@@ -10,6 +10,7 @@
  * import remain). Used to allow a payout to be re-imported.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface ClearImportHistoryOptions {
   fromDate?: string | null;
@@ -33,11 +34,13 @@ export interface ClearImportHistoryResponse {
  */
 export async function clearImportHistory(
   appDb: Knex,
+  companyCode: string,
   opts: ClearImportHistoryOptions = {},
 ): Promise<ClearImportHistoryResponse> {
+  const scope = companyScope(companyCode);
   try {
     const targetSystem = opts.targetSystem ?? 'opera_se';
-    let query = appDb('gocardless_imports').where({ target_system: targetSystem });
+    let query = appDb('gocardless_imports').where({ ...scope, target_system: targetSystem });
     if (opts.fromDate) query = query.andWhere('payment_date', '>=', opts.fromDate);
     if (opts.toDate) query = query.andWhere('payment_date', '<=', opts.toDate);
 
@@ -66,14 +69,16 @@ export interface DeleteImportRecordResponse {
 
 export async function deleteImportRecord(
   appDb: Knex,
+  companyCode: string,
   recordId: number,
 ): Promise<DeleteImportRecordResponse> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(recordId) || recordId <= 0) {
     return { success: false, error: 'Invalid record id' };
   }
 
   try {
-    const deleted = await appDb('gocardless_imports').where({ id: recordId }).delete();
+    const deleted = await appDb('gocardless_imports').where({ ...scope, id: recordId }).delete();
     if (deleted > 0) {
       return {
         success: true,

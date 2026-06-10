@@ -14,6 +14,7 @@
  * unit-testable. Mirrors the existing pattern used by sync-from-opera.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface MandateRecord {
   mandate_id: string;
@@ -163,10 +164,11 @@ function formatPounds(pounds: number): string {
 
 async function findActiveMandate(
   appDb: Knex,
+  scope: { company_code: string },
   operaAccount: string,
 ): Promise<MandateRecord | null> {
   const row = (await appDb('gocardless_mandates')
-    .where({ opera_account: operaAccount, mandate_status: 'active' })
+    .where({ ...scope, opera_account: operaAccount, mandate_status: 'active' })
     .orderBy('created_at', 'desc')
     .first()) as unknown as
     | {
@@ -185,12 +187,13 @@ async function findActiveMandate(
 
 async function findDuplicateInvoiceClash(
   appDb: Knex,
+  scope: { company_code: string },
   operaAccount: string,
   invoices: string[],
 ): Promise<{ status: string; refs: string[] } | null> {
   if (invoices.length === 0) return null;
   const rows = (await appDb('gocardless_payment_requests')
-    .where({ opera_account: operaAccount })
+    .where({ ...scope, opera_account: operaAccount })
     .select('status', 'invoice_refs')) as unknown as Array<{
     status: string | null;
     invoice_refs: string | null;
@@ -210,6 +213,7 @@ async function findDuplicateInvoiceClash(
 
 async function persistPaymentRequest(
   appDb: Knex,
+  scope: { company_code: string },
   row: {
     mandate_id: string;
     opera_account: string;
@@ -224,6 +228,7 @@ async function persistPaymentRequest(
 ): Promise<Record<string, unknown>> {
   const ids = (await appDb('gocardless_payment_requests')
     .insert({
+      ...scope,
       mandate_id: row.mandate_id,
       opera_account: row.opera_account,
       amount_pence: row.amount_pence,
@@ -244,13 +249,14 @@ async function persistPaymentRequest(
         ? (inserted as any).id
         : null;
   const persisted = (await appDb('gocardless_payment_requests')
-    .where(newId ? { id: newId } : { payment_id: row.payment_id ?? '' })
+    .where(newId ? { ...scope, id: newId } : { ...scope, payment_id: row.payment_id ?? '' })
     .first()) as Record<string, unknown> | undefined;
   return persisted ?? {};
 }
 
 export async function requestPayment(
   appDb: Knex,
+  companyCode: string,
   input: RequestPaymentInput,
   settings: RequestPaymentSettings,
   readOpera: (
@@ -267,6 +273,7 @@ export async function requestPayment(
   }) => Promise<RemoteCreatePaymentResult>,
   today: Date = new Date(),
 ): Promise<RequestPaymentResponse> {
+  const scope = companyScope(companyCode);
   const operaAccount = trim(input.operaAccount);
   const invoices = (input.invoices ?? [])
     .map((s) => trim(String(s)))
@@ -278,7 +285,7 @@ export async function requestPayment(
   // 1. Duplicate-invoice guard
   if (invoices.length > 0) {
     try {
-      const clash = await findDuplicateInvoiceClash(appDb, operaAccount, invoices);
+      const clash = await findDuplicateInvoiceClash(appDb, scope, operaAccount, invoices);
       if (clash) {
         return {
           success: false,
@@ -296,7 +303,7 @@ export async function requestPayment(
   }
 
   // 2. Mandate lookup
-  const mandate = await findActiveMandate(appDb, operaAccount);
+  const mandate = await findActiveMandate(appDb, scope, operaAccount);
   if (!mandate) {
     return {
       success: false,
@@ -385,7 +392,7 @@ export async function requestPayment(
   const gcPaymentId = (remote.payment?.id as string | undefined) ?? null;
 
   // 8. Persist locally
-  const persisted = await persistPaymentRequest(appDb, {
+  const persisted = await persistPaymentRequest(appDb, scope, {
     mandate_id: mandate.mandate_id,
     opera_account: operaAccount,
     amount_pence: amountPence,
@@ -430,6 +437,7 @@ export interface BulkRequestPaymentResponse {
 
 export async function requestBulkPayments(
   appDb: Knex,
+  companyCode: string,
   inputs: RequestPaymentInput[],
   settings: RequestPaymentSettings,
   readOpera: (
@@ -452,6 +460,7 @@ export async function requestBulkPayments(
     try {
       const r = await requestPayment(
         appDb,
+        companyCode,
         input,
         settings,
         readOpera,

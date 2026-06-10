@@ -14,6 +14,7 @@
  * min_amount.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface CollectableInvoice {
   opera_account: string;
@@ -123,15 +124,17 @@ function daysBetween(today: Date, due: Date): number {
 export async function getCollectableInvoices(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   opts: GetCollectableInvoicesOptions = {},
   today: Date = new Date(),
 ): Promise<GetCollectableInvoicesResponse> {
+  const scope = companyScope(companyCode);
   const overdueOnly = !!opts.overdueOnly;
   const minAmount = Math.max(0, Number(opts.minAmount ?? 0));
   try {
     // 1. Active mandates keyed by opera_account
     const mandateRows = (await appDb('gocardless_mandates')
-      .where({ mandate_status: 'active' })
+      .where({ ...scope, mandate_status: 'active' })
       .select('opera_account', 'mandate_id', 'mandate_status')) as unknown as Array<{
       opera_account: string | null;
       mandate_id: string | null;
@@ -149,10 +152,12 @@ export async function getCollectableInvoices(
     }
 
     // 2. Already-requested invoices (skip cancelled/failed/charged_back)
-    const requestRows = (await appDb('gocardless_payment_requests').select(
-      'status',
-      'invoice_refs',
-    )) as unknown as PaymentRequestLite[];
+    const requestRows = (await appDb('gocardless_payment_requests')
+      .where({ ...scope })
+      .select(
+        'status',
+        'invoice_refs',
+      )) as unknown as PaymentRequestLite[];
     const alreadyRequested = new Set<string>();
     for (const r of requestRows ?? []) {
       const status = trim(r.status);
@@ -164,11 +169,13 @@ export async function getCollectableInvoices(
     }
 
     // 3. Subscription source_doc lookup keyed by opera_account
-    const subRows = (await appDb('gocardless_subscriptions').select(
-      'opera_account',
-      'source_doc',
-      'status',
-    )) as unknown as SubscriptionLite[];
+    const subRows = (await appDb('gocardless_subscriptions')
+      .where({ ...scope })
+      .select(
+        'opera_account',
+        'source_doc',
+        'status',
+      )) as unknown as SubscriptionLite[];
     const subSourceDocs = new Map<string, string>();
     for (const s of subRows ?? []) {
       const acct = trim(s.opera_account);

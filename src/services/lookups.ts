@@ -12,6 +12,7 @@
 import type { Knex } from 'knex';
 import { fetchVatCodesWithRates } from '../_shared/index.js';
 import { loadSettings, type GoCardlessSettings } from './settings.js';
+import { companyScope } from '../_shared/get-company.js';
 
 // =====================================================================
 // Batch types — atype where ay_type='R' AND ay_batched=1
@@ -347,6 +348,7 @@ export async function getSetupStatus(
   if (!configured && appDb) {
     try {
       const rows = (await appDb('gocardless_partner_signups')
+        .where({ ...companyScope(companyCode) })
         .orderBy('created_at', 'desc')
         .first()) as unknown as Record<string, unknown> | undefined;
       if (rows && rows.status !== 'completed' && rows.status !== 'failed') {

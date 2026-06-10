@@ -79,7 +79,9 @@ function makeAppDb(state: MockState): any {
 
 function applyConds(rows: SubRow[], conds: Record<string, unknown>): SubRow[] {
   return rows.filter((r) =>
-    Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+    Object.entries(conds)
+      .filter(([k]) => k !== 'company_code')
+      .every(([k, v]) => (r as any)[k] === v),
   );
 }
 
@@ -130,7 +132,11 @@ function makeSubsBuilder(state: MockState): any {
     update: async (patch: Record<string, unknown>) => {
       let count = 0;
       for (const r of state.subs) {
-        if (Object.entries(conds).every(([k, v]) => (r as any)[k] === v)) {
+        if (
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v)
+        ) {
           Object.assign(r, patch);
           count += 1;
         }
@@ -182,7 +188,9 @@ function makeMandateBuilder(state: MockState): any {
   const matches = () =>
     state.mandates.filter(
       (m) =>
-        Object.entries(conds).every(([k, v]) => (m as any)[k] === v) &&
+        Object.entries(conds)
+          .filter(([k]) => k !== 'company_code')
+          .every(([k, v]) => (m as any)[k] === v) &&
         (!inCol || (inVals && inVals.includes((m as any)[inCol!]))),
     );
   const builder: any = {
@@ -213,7 +221,10 @@ function makeMandateBuilder(state: MockState): any {
       return rows[0];
     },
     select: async (..._cols: string[]) => {
-      if (!inCol && Object.keys(conds).length === 0) return state.mandates;
+      const meaningfulConds = Object.keys(conds).filter(
+        (k) => k !== 'company_code',
+      );
+      if (!inCol && meaningfulConds.length === 0) return state.mandates;
       return matches();
     },
   };
@@ -242,7 +253,9 @@ function makeDocsBuilder(state: MockState): any {
     select: async (..._cols: string[]) => {
       return state.docs.filter(
         (d) =>
-          Object.entries(conds).every(([k, v]) => (d as any)[k] === v) &&
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (d as any)[k] === v) &&
           (!inCol || (inVals && inVals.includes((d as any)[inCol!]))),
       );
     },
@@ -259,7 +272,9 @@ function makeDocsBuilder(state: MockState): any {
       state.docs = state.docs.filter(
         (d) =>
           !(
-            Object.entries(conds).every(([k, v]) => (d as any)[k] === v) &&
+            Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (d as any)[k] === v) &&
             (!inCol || (inVals && inVals.includes((d as any)[inCol!])))
           ),
       );
@@ -268,7 +283,9 @@ function makeDocsBuilder(state: MockState): any {
     then: (cb: (rows: SubDocRow[]) => unknown) => {
       let result = state.docs.filter(
         (d) =>
-          Object.entries(conds).every(([k, v]) => (d as any)[k] === v) &&
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (d as any)[k] === v) &&
           (!inCol || (inVals && inVals.includes((d as any)[inCol!]))),
       );
       if (order) {

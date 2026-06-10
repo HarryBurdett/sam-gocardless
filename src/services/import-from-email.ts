@@ -53,6 +53,7 @@ export interface ImportFromEmailResponse extends ImportBatchResponse {
 export async function importGocardlessBatchFromEmail(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   input: ImportFromEmailRequest,
   settings: ImportSettings,
   knownMandates: MandateLink[],
@@ -76,6 +77,7 @@ export async function importGocardlessBatchFromEmail(
   const result = await importGocardlessBatch(
     operaDb,
     appDb,
+    companyCode,
     importInput,
     settings,
     knownMandates,

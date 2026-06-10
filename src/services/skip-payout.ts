@@ -13,6 +13,7 @@
  * and won't show in the available-payouts list.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 const REASON_TO_IMPORTED_BY: Record<string, string> = {
   foreign_currency: 'MANUAL', // suffix added with currency below
@@ -48,8 +49,10 @@ export interface SkipPayoutResponse {
 
 export async function skipPayout(
   appDb: Knex,
+  companyCode: string,
   input: SkipPayoutInput,
 ): Promise<SkipPayoutResponse> {
+  const scope = companyScope(companyCode);
   try {
     const reason = input.reason ?? 'manual';
     const currency = (input.currency ?? 'GBP').toUpperCase();
@@ -84,6 +87,7 @@ export async function skipPayout(
 
     const inserted = await appDb('gocardless_imports')
       .insert({
+        ...scope,
         // Audit HIGH: previously dropped on insert. Without payout_id
         // the next `isPayoutImported(payoutId)` lookup returned false
         // so skipped FX/duplicate payouts re-appeared on every API

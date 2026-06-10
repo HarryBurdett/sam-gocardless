@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { skipPayout } from '../src/services/skip-payout.js';
 
+const TEST_COMPANY = 'C';
+
 function makeAppDb(captureInsert?: (row: Record<string, unknown>) => void): any {
   const inserted: Record<string, unknown>[] = [];
   const db: any = (table: string) => {
@@ -29,7 +31,7 @@ describe('skipPayout', () => {
       captured = r;
     });
 
-    const result = await skipPayout(appDb, {
+    const result = await skipPayout(appDb, TEST_COMPANY, {
       payoutId: 'PO-123',
       bankReference: 'INTSYSUKLTD-XYZ',
       grossAmount: 1500,
@@ -51,7 +53,7 @@ describe('skipPayout', () => {
       captured = r;
     });
 
-    const result = await skipPayout(appDb, {
+    const result = await skipPayout(appDb, TEST_COMPANY, {
       payoutId: 'PO-123',
       bankReference: 'INTSYSUKLTD-XYZ',
       grossAmount: 1500,
@@ -71,7 +73,7 @@ describe('skipPayout', () => {
       captured = r;
     });
 
-    await skipPayout(appDb, {
+    await skipPayout(appDb, TEST_COMPANY, {
       payoutId: 'PO-123',
       bankReference: 'X',
       grossAmount: 1500,
@@ -87,7 +89,7 @@ describe('skipPayout', () => {
       captured = r;
     });
 
-    await skipPayout(appDb, {
+    await skipPayout(appDb, TEST_COMPANY, {
       payoutId: 'PO-123',
       bankReference: 'X',
       grossAmount: 1500,
@@ -121,7 +123,7 @@ describe('skipPayout', () => {
     });
     db.fn = { now: () => new Date() };
 
-    const result = await skipPayout(db, {
+    const result = await skipPayout(db, TEST_COMPANY, {
       payoutId: 'PO-123',
       bankReference: 'X',
       grossAmount: 1500,

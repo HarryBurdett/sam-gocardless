@@ -15,6 +15,7 @@
  * sn_dormant=0 / sn_stop=0 filter the matcher uses.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface EligibleCustomer {
   account: string;
@@ -45,12 +46,15 @@ interface MandateLookup {
 
 export async function getEligibleCustomers(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex,
 ): Promise<EligibleCustomersResponse> {
+  const scope = companyScope(companyCode);
   try {
     // 1. Build lookup of all linked mandates from per-app DB
     const mandateRows = (await appDb('gocardless_mandates')
-      .where('opera_account', '!=', '__UNLINKED__')
+      .where({ ...scope })
+      .andWhere('opera_account', '!=', '__UNLINKED__')
       .select(
         'opera_account',
         'mandate_id',

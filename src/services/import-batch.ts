@@ -29,6 +29,7 @@ import {
 } from '../_shared/index.js';
 import { isPayoutImported } from './import-idempotency.js';
 import { checkOrphanedImports } from './restore-recovery.js';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface IncomingPayment {
   customer_account: string;
@@ -208,6 +209,7 @@ export async function resolveDestinationBank(
 export async function validateImportRequest(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   input: ImportRequest,
   settings: ImportSettings,
   knownMandates: MandateLink[],
@@ -239,7 +241,7 @@ export async function validateImportRequest(
     // Scope idempotency to the target Opera system so opera_se imports
     // can't collide with opera_3 imports. Audit HIGH: previously called
     // with no opts → MANUAL-* skipped rows also blocked re-import.
-    const alreadyImported = await isPayoutImported(appDb, input.payoutId, {
+    const alreadyImported = await isPayoutImported(appDb, companyCode, input.payoutId, {
       targetSystem: 'opera_se',
     });
     if (alreadyImported) {
@@ -249,7 +251,7 @@ export async function validateImportRequest(
       // when Opera still has the underlying entry.
       let isOrphan = false;
       try {
-        const orphanResult = await checkOrphanedImports(operaDb, appDb);
+        const orphanResult = await checkOrphanedImports(operaDb, appDb, companyCode);
         if (orphanResult.success) {
           isOrphan = orphanResult.orphans.some(
             (o) => o.payout_id === input.payoutId,
@@ -470,6 +472,12 @@ export interface BatchPostingExecutor {
      * it; production callers always supply it.
      */
     appDb?: Knex | null,
+    /**
+     * Opera company code — required by auto-allocation when scoping the
+     * per-app `gocardless_payment_requests` read. Optional so unit-test
+     * mocks that don't exercise the appDb path can omit it.
+     */
+    companyCode?: string,
   ): Promise<{
     success: boolean;
     records_imported: number;
@@ -497,6 +505,7 @@ export interface RecordImportArgs {
 
 async function recordImportHistory(
   appDb: Knex,
+  companyCode: string,
   args: RecordImportArgs,
 ): Promise<void> {
   // Retry the insert up to 3 times with backoff. If it ultimately
@@ -506,7 +515,9 @@ async function recordImportHistory(
   // gocardless_imports IS the idempotency gate; if the row is
   // missing, the next `isPayoutImported(payout_id)` call returns
   // false and the whole batch re-posts to Opera. Audit 2026-05-15.
+  const scope = companyScope(companyCode);
   const insertRow = {
+    ...scope,
     target_system: 'opera_se',
     payout_id: args.payoutId,
     source: args.source,
@@ -583,6 +594,7 @@ export interface ImportBatchResponse {
 export async function importGocardlessBatch(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   input: ImportRequest,
   settings: ImportSettings,
   knownMandates: MandateLink[],
@@ -592,6 +604,7 @@ export async function importGocardlessBatch(
   const validation = await validateImportRequest(
     operaDb,
     appDb,
+    companyCode,
     input,
     settings,
     knownMandates,
@@ -617,7 +630,7 @@ export async function importGocardlessBatch(
   }
 
   try {
-    const result = await executor.postBatch(operaDb, request, appDb);
+    const result = await executor.postBatch(operaDb, request, appDb, companyCode);
     if (!result.success) {
       return {
         success: false,
@@ -631,7 +644,7 @@ export async function importGocardlessBatch(
     );
     const netAmount = grossAmount - request.goCardlessFees;
     try {
-      await recordImportHistory(appDb, {
+      await recordImportHistory(appDb, companyCode, {
         payoutId: request.payoutId,
         source: request.source,
         bankReference: request.reference,

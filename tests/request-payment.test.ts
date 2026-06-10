@@ -7,6 +7,8 @@ import {
   type RequestPaymentInput,
 } from '../src/services/request-payment.js';
 
+const TEST_COMPANY = 'C';
+
 interface MandateRow {
   mandate_id: string;
   opera_account: string;
@@ -57,7 +59,9 @@ function makeAppDb(state: MockState): any {
       },
       first: async () => {
         let rows = state.mandates.filter((m) =>
-          Object.entries(conds).every(([k, v]) => (m as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (m as any)[k] === v),
         );
         if (order) {
           const o = order;
@@ -83,12 +87,16 @@ function makeAppDb(state: MockState): any {
       },
       select: async (..._cols: string[]) => {
         return state.requests.filter((r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
       },
       first: async () => {
         return state.requests.find((r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
       },
       insert: (row: Omit<PaymentRequestRow, 'id'>) => {
@@ -129,6 +137,7 @@ describe('requestPayment', () => {
     const state: MockState = { mandates: [], requests: [], nextId: 0 };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: '', invoices: ['INV1'], amountPence: 100 },
       {},
       noOpOpera,
@@ -142,6 +151,7 @@ describe('requestPayment', () => {
     const state: MockState = { mandates: [], requests: [], nextId: 0 };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 100 },
       {},
       noOpOpera,
@@ -160,6 +170,7 @@ describe('requestPayment', () => {
     let captured = 0;
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'] },
       {},
       async () => ({ invoiceTotalPounds: 12.34, unallocatedCreditPounds: 0 }),
@@ -180,6 +191,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'] },
       {},
       async () => ({ invoiceTotalPounds: null, unallocatedCreditPounds: 0 }),
@@ -197,6 +209,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 0 },
       {},
       noOpOpera,
@@ -214,6 +227,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 5000 },
       {},
       async () => ({ invoiceTotalPounds: 50.0, unallocatedCreditPounds: 25.5 }),
@@ -245,6 +259,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV2'], amountPence: 1000 },
       {},
       noOpOpera,
@@ -276,6 +291,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 1000 },
       {},
       noOpOpera,
@@ -293,6 +309,7 @@ describe('requestPayment', () => {
     let capturedDesc = '';
     await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 1000 },
       { request_statement_reference: 'INTSYS' },
       noOpOpera,
@@ -314,6 +331,7 @@ describe('requestPayment', () => {
     let captured: string | null = 'unset';
     await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       {
         operaAccount: 'CUST01',
         invoices: ['INV1'],
@@ -340,6 +358,7 @@ describe('requestPayment', () => {
     let captured: string | null = null;
     await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       {
         operaAccount: 'CUST01',
         invoices: ['INV1'],
@@ -365,6 +384,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 7500 },
       {},
       noOpOpera,
@@ -391,6 +411,7 @@ describe('requestPayment', () => {
     };
     const result = await requestPayment(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 1000 },
       {},
       noOpOpera,
@@ -419,7 +440,8 @@ describe('requestBulkPayments', () => {
     ];
     const result = await requestBulkPayments(
       makeAppDb(state),
-      inputs,
+      TEST_COMPANY,
+inputs,
       {},
       noOpOpera,
       okRemote(),
@@ -439,7 +461,8 @@ describe('requestBulkPayments', () => {
     };
     const result = await requestBulkPayments(
       makeAppDb(state),
-      [{ operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 1000 }],
+      TEST_COMPANY,
+[{ operaAccount: 'CUST01', invoices: ['INV1'], amountPence: 1000 }],
       {},
       noOpOpera,
       okRemote(),

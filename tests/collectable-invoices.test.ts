@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getCollectableInvoices } from '../src/services/collectable-invoices.js';
 
+const TEST_COMPANY = 'C';
+
 interface StranRow {
   st_account: string;
   sn_name: string;
@@ -90,7 +92,11 @@ function makeAppDb(state: MockState): any {
       select: async (..._cols: string[]) => {
         if (table === 'gocardless_mandates') {
           return state.mandates.filter((r) =>
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(conds)
+              // Mock fixture rows do not carry company_code; the scope
+              // filter is applied (and verified) in the isolation tests.
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
         }
         if (table === 'gocardless_subscriptions') return state.subs;
@@ -136,6 +142,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -158,6 +165,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -178,6 +186,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { overdueOnly: true },
       TODAY,
     );
@@ -197,6 +206,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -217,6 +227,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -250,6 +261,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -269,6 +281,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -291,6 +304,7 @@ describe('getCollectableInvoices', () => {
     const result = await getCollectableInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -318,7 +332,7 @@ describe('getCollectableInvoices', () => {
       return builder;
     };
     appDb.fn = { now: () => '__NOW__' };
-    const result = await getCollectableInvoices(operaDb, appDb, {}, TODAY);
+    const result = await getCollectableInvoices(operaDb, appDb, TEST_COMPANY, {}, TODAY);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/DB unavailable/);
   });

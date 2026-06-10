@@ -256,6 +256,7 @@ function pickRawPayouts(payouts: Array<Record<string, unknown>>): RawPayout[] {
 
 export async function fetchGocardlessApiPayouts(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex,
   client: GoCardlessClient,
   environment: 'sandbox' | 'live',
@@ -304,7 +305,7 @@ export async function fetchGocardlessApiPayouts(
   // (i.e. behave as if the row weren't in history). The downstream
   // Opera duplicate-check (step 4, `findOperaByReference`) becomes the
   // authoritative gate — same path as a clean first-time fetch.
-  const orphanResult = await checkOrphanedImports(operaDb, appDb).catch(() => ({
+  const orphanResult = await checkOrphanedImports(operaDb, appDb, companyCode).catch(() => ({
     success: false,
     orphans: [] as OrphanedImport[],
     count: 0,
@@ -326,7 +327,7 @@ export async function fetchGocardlessApiPayouts(
     try {
       if (
         !orphanPayoutIds.has(payout.id) &&
-        (await isGocardlessPayoutImported(appDb, payout.id, targetSystem))
+        (await isGocardlessPayoutImported(appDb, companyCode, payout.id, targetSystem))
       ) {
         filterStats.filtered_already_in_history += 1;
         continue;
@@ -336,6 +337,7 @@ export async function fetchGocardlessApiPayouts(
         !orphanReferences.has(payout.reference) &&
         (await isGocardlessReferenceImported(
           appDb,
+          companyCode,
           payout.reference,
           targetSystem,
         ))
@@ -492,6 +494,7 @@ export async function fetchGocardlessApiPayouts(
       if (allPayments.length > 0) {
         const matchResult = await matchPaymentsHelper(
           appDb,
+          companyCode,
           operaDb,
           allPayments,
         );

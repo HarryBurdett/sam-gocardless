@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { archiveGocardlessEmail } from '../src/services/archive-email.js';
 
+const TEST_COMPANY = 'C';
+
 interface ImportRow {
   id: number;
   email_id: number | null;
@@ -56,6 +58,7 @@ describe('archiveGocardlessEmail', () => {
   it('rejects missing email_id', async () => {
     const result = await archiveGocardlessEmail(
       makeAppDb({ rows: [], nextId: 1 }),
+      TEST_COMPANY,
       { emailId: NaN as any },
     );
     expect(result.success).toBe(false);
@@ -65,6 +68,7 @@ describe('archiveGocardlessEmail', () => {
   it('rejects email_id <= 0', async () => {
     const result = await archiveGocardlessEmail(
       makeAppDb({ rows: [], nextId: 1 }),
+      TEST_COMPANY,
       { emailId: 0 },
     );
     expect(result.success).toBe(false);
@@ -72,7 +76,7 @@ describe('archiveGocardlessEmail', () => {
 
   it('records tracking row with target_system=archived', async () => {
     const state: MockState = { rows: [], nextId: 1 };
-    const result = await archiveGocardlessEmail(makeAppDb(state), {
+    const result = await archiveGocardlessEmail(makeAppDb(state), TEST_COMPANY, {
       emailId: 42,
     });
     expect(result.success).toBe(true);
@@ -107,6 +111,7 @@ describe('archiveGocardlessEmail', () => {
     };
     const result = await archiveGocardlessEmail(
       makeAppDb(state),
+      TEST_COMPANY,
       { emailId: 99, archiveFolder: 'Archive/GoCardless' },
       fakeIngest,
     );
@@ -117,7 +122,7 @@ describe('archiveGocardlessEmail', () => {
 
   it('returns error when DB insert fails AND no move attempted', async () => {
     const state: MockState = { rows: [], nextId: 1, raiseOnInsert: true };
-    const result = await archiveGocardlessEmail(makeAppDb(state), {
+    const result = await archiveGocardlessEmail(makeAppDb(state), TEST_COMPANY, {
       emailId: 99,
     });
     expect(result.success).toBe(false);

@@ -12,6 +12,7 @@
  * Stored in `mandate_setup_requests` (per-app DB).
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 const FINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -93,12 +94,13 @@ export interface ListMandateSetupsResponse {
 
 export async function listMandateSetups(
   appDb: Knex,
+  companyCode: string,
 ): Promise<ListMandateSetupsResponse> {
+  const scope = companyScope(companyCode);
   try {
-    const rows = (await appDb('mandate_setup_requests').orderBy(
-      'id',
-      'desc',
-    )) as unknown as SetupRow[];
+    const rows = (await appDb('mandate_setup_requests')
+      .where({ ...scope })
+      .orderBy('id', 'desc')) as unknown as SetupRow[];
     const setups = rows.map(rowToSetup);
     const pendingCount = setups.filter(
       (s) => !FINAL_STATUSES.has(s.status),
@@ -220,10 +222,12 @@ function defaultEmailBody(
  */
 export async function createMandateSetup(
   appDb: Knex,
+  companyCode: string,
   input: CreateMandateSetupInput,
   remote: CreateMandateSetupRemote,
   sendEmail?: CreateMandateSetupEmailSender,
 ): Promise<CreateMandateSetupResponse> {
+  const scope = companyScope(companyCode);
   const operaAccount = (input.operaAccount ?? '').trim();
   const operaName = (input.operaName ?? '').trim();
   const customerEmail = (input.customerEmail ?? '').trim();
@@ -269,6 +273,7 @@ export async function createMandateSetup(
   try {
     const ids = await appDb('mandate_setup_requests')
       .insert({
+        ...scope,
         opera_account: operaAccount,
         opera_name: operaName || null,
         customer_email: customerEmail,
@@ -323,7 +328,7 @@ export async function createMandateSetup(
   try {
     if (emailSent) {
       await appDb('mandate_setup_requests')
-        .where({ id: setupId })
+        .where({ ...scope, id: setupId })
         .update({
           status: 'email_sent',
           email_sent_at: appDb.fn.now(),
@@ -331,7 +336,7 @@ export async function createMandateSetup(
         });
     } else {
       await appDb('mandate_setup_requests')
-        .where({ id: setupId })
+        .where({ ...scope, id: setupId })
         .update({
           status: 'pending',
           status_detail: `Email not sent: ${emailError}`,
@@ -344,7 +349,7 @@ export async function createMandateSetup(
 
   // 6. Return enriched setup record
   const fresh = (await appDb('mandate_setup_requests')
-    .where({ id: setupId })
+    .where({ ...scope, id: setupId })
     .first()) as unknown as SetupRow | undefined;
 
   return {
@@ -436,14 +441,15 @@ export interface CheckSetupsResponse {
  */
 export async function checkPendingMandateSetups(
   appDb: Knex,
+  companyCode: string,
   remote: CheckSetupsRemote,
   completeSetup?: CompleteMandateSetupFn,
 ): Promise<CheckSetupsResponse> {
+  const scope = companyScope(companyCode);
   try {
-    const rows = (await appDb('mandate_setup_requests').orderBy(
-      'id',
-      'desc',
-    )) as unknown as SetupRow[];
+    const rows = (await appDb('mandate_setup_requests')
+      .where({ ...scope })
+      .orderBy('id', 'desc')) as unknown as SetupRow[];
     const pending = rows.filter(
       (r) => !FINAL_STATUSES.has((r.status ?? '').trim()),
     );
@@ -533,7 +539,7 @@ export async function checkPendingMandateSetups(
         if (Object.keys(updateFields).length > 0) {
           updateFields.updated_at = appDb.fn.now();
           await appDb('mandate_setup_requests')
-            .where({ id: setup.id })
+            .where({ ...scope, id: setup.id })
             .update(updateFields);
 
           if (newStatusForLink === 'completed' && mandateId && completeSetup) {
@@ -549,7 +555,7 @@ export async function checkPendingMandateSetups(
           }
 
           const fresh = (await appDb('mandate_setup_requests')
-            .where({ id: setup.id })
+            .where({ ...scope, id: setup.id })
             .first()) as unknown as SetupRow | undefined;
           updates.push({
             setup_id: setup.id,
@@ -597,14 +603,16 @@ export interface CancelSetupResponse {
 
 export async function cancelMandateSetup(
   appDb: Knex,
+  companyCode: string,
   setupId: number,
 ): Promise<CancelSetupResponse> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(setupId) || setupId <= 0) {
     return { success: false, error: 'setup_id must be a positive number' };
   }
   try {
     const row = (await appDb('mandate_setup_requests')
-      .where({ id: setupId })
+      .where({ ...scope, id: setupId })
       .first()) as
       | { id: number; status: string | null; opera_account: string | null; opera_name: string | null }
       | undefined;
@@ -619,7 +627,7 @@ export async function cancelMandateSetup(
       };
     }
 
-    await appDb('mandate_setup_requests').where({ id: setupId }).update({
+    await appDb('mandate_setup_requests').where({ ...scope, id: setupId }).update({
       status: 'cancelled',
       status_detail: 'Cancelled by user',
       updated_at: appDb.fn.now(),

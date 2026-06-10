@@ -9,6 +9,7 @@
  * and applies customer/date filters.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 function r2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -55,16 +56,18 @@ export interface ReceiptSearchResponse {
 
 export async function searchReceipts(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex | null,
   opts: ReceiptSearchOptions = {},
 ): Promise<ReceiptSearchResponse> {
+  const scope = companyScope(companyCode);
   try {
     const limit = opts.limit ?? 200;
     const searchLower = opts.customer ? opts.customer.toLowerCase().trim() : null;
 
     // Fetch up to 1000 history records in the date range to search within
     let query = appDb('gocardless_imports')
-      .where({ target_system: 'opera_se' })
+      .where({ ...scope, target_system: 'opera_se' })
       .orderBy('payment_date', 'desc')
       .orderBy('imported_at', 'desc')
       .limit(1000);

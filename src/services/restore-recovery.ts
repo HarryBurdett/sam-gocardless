@@ -22,6 +22,7 @@
  * Opera's ae_entref since the company prefix may be truncated.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface OrphanedImport {
   id: number;
@@ -107,6 +108,7 @@ function rowToOrphan(r: ImportRow): OrphanedImport {
 async function detectOrphans(
   operaDb: Knex,
   appDb: Knex,
+  scope: { company_code: string },
 ): Promise<OrphanedImport[]> {
   // Only rows that ACTUALLY claim to have posted to Opera are candidates
   // for orphan detection. Skipped payouts (foreign-currency, manual-skip,
@@ -121,6 +123,7 @@ async function detectOrphans(
   // signal is the `imported_by` marker (real imports use 'GOCARDLS',
   // 'EMAIL', etc.; skips use 'MANUAL-*').
   const imports = (await appDb('gocardless_imports')
+    .where({ ...scope })
     .select(
       'id',
       'payout_id',
@@ -221,9 +224,11 @@ async function detectOrphans(
 export async function checkOrphanedImports(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
 ): Promise<OrphanCheckResponse> {
+  const scope = companyScope(companyCode);
   try {
-    const orphans = await detectOrphans(operaDb, appDb);
+    const orphans = await detectOrphans(operaDb, appDb, scope);
     return { success: true, orphans, count: orphans.length };
   } catch (err: any) {
     return {
@@ -243,15 +248,17 @@ export async function checkOrphanedImports(
 export async function recoverGocardlessFromRestore(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
 ): Promise<OrphanRecoveryResponse> {
+  const scope = companyScope(companyCode);
   try {
-    const orphans = await detectOrphans(operaDb, appDb);
+    const orphans = await detectOrphans(operaDb, appDb, scope);
     if (orphans.length === 0) {
       return { success: true, cleared: 0, cleared_imports: [] };
     }
     const ids = orphans.map((o) => o.id);
     const cleared = Number(
-      await appDb('gocardless_imports').whereIn('id', ids).del(),
+      await appDb('gocardless_imports').where({ ...scope }).whereIn('id', ids).del(),
     );
     return { success: true, cleared, cleared_imports: orphans };
   } catch (err: any) {

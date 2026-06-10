@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getEligibleCustomers } from '../src/services/eligible-customers.js';
 
+const TEST_COMPANY = 'C';
+
 interface MandateRow {
   opera_account: string;
   mandate_id: string;
@@ -27,10 +29,14 @@ function makeAppDb(state: MockState): any {
     }
     let neqConds: Array<{ col: string; val: unknown }> = [];
     const builder: any = {
-      where: (col: string, op: string, val: unknown) => {
-        if (op === '!=') neqConds.push({ col, val });
+      where: (col: any, op?: any, val?: any) => {
+        // Ignore object form (company_code scope) for fixture purposes.
+        if (typeof col === 'string' && op === '!=') {
+          neqConds.push({ col, val });
+        }
         return builder;
       },
+      andWhere: (col: any, op?: any, val?: any) => builder.where(col, op, val),
       select: (..._cols: string[]) => {
         const rows = state.mandates.filter((r) =>
           neqConds.every((nc) => (r as any)[nc.col] !== nc.val),
@@ -74,6 +80,7 @@ describe('getEligibleCustomers', () => {
     };
     const result = await getEligibleCustomers(
       makeAppDb(state),
+      TEST_COMPANY,
       makeOperaDb(state),
     );
     expect(result.success).toBe(true);
@@ -97,6 +104,7 @@ describe('getEligibleCustomers', () => {
     };
     const result = await getEligibleCustomers(
       makeAppDb(state),
+      TEST_COMPANY,
       makeOperaDb(state),
     );
     expect(result.count).toBe(1);
@@ -123,6 +131,7 @@ describe('getEligibleCustomers', () => {
     };
     const result = await getEligibleCustomers(
       makeAppDb(state),
+      TEST_COMPANY,
       makeOperaDb(state),
     );
     expect(result.count).toBe(1);
@@ -144,6 +153,7 @@ describe('getEligibleCustomers', () => {
     };
     const result = await getEligibleCustomers(
       makeAppDb(state),
+      TEST_COMPANY,
       makeOperaDb(state),
     );
     expect(result.customers[0]?.has_mandate).toBe(false);

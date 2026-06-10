@@ -15,11 +15,6 @@
  * Token redaction: `merchant_access_token` is NEVER returned to the
  * frontend — the response gets a `has_token: bool` instead.
  */
-// TODO(multi-company): the gocardless_partner_signups table queries
-// below do not yet filter by company_code. A follow-up migration
-// (planned 009_partner_signups_company_code.ts) will add the column;
-// once it lands, every appDb('gocardless_partner_signups') query in
-// this file must be updated to use companyScope(companyCode).
 import type { Knex } from 'knex';
 import { randomBytes } from 'node:crypto';
 import {
@@ -30,6 +25,7 @@ import {
 import {
   createPartnerClientFromSettings,
 } from './gocardless-api.js';
+import { companyScope } from '../_shared/get-company.js';
 
 // ---------------------------------------------------------------------
 // Types
@@ -192,8 +188,10 @@ export async function getLatestPartnerSignup(
   appDb: Knex,
   companyCode: string,
 ): Promise<SignupStatusResponse> {
+  const scope = companyScope(companyCode);
   try {
     const row = (await appDb('gocardless_partner_signups')
+      .where({ ...scope })
       .orderBy('id', 'desc')
       .first()) as SignupRow | undefined;
     if (!row) {
@@ -214,8 +212,11 @@ export async function getAllMerchantSignups(
   companyCode: string,
   opts: { status?: string | null } = {},
 ): Promise<MerchantsResponse> {
+  const scope = companyScope(companyCode);
   try {
-    let query = appDb('gocardless_partner_signups').orderBy('id', 'desc');
+    let query = appDb('gocardless_partner_signups')
+      .where({ ...scope })
+      .orderBy('id', 'desc');
     if (opts.status) {
       query = query.where({ status: opts.status });
     }
@@ -273,6 +274,7 @@ export async function updateMerchantAppUrl(
   companyCode: string,
   input: UpdateMerchantAppUrlInput,
 ): Promise<UpdateMerchantAppUrlResponse> {
+  const scope = companyScope(companyCode);
   if (!input.signupId) {
     return { success: false, error: 'No signup ID provided' };
   }
@@ -280,7 +282,7 @@ export async function updateMerchantAppUrl(
   const appUrl = (input.appUrl ?? '').trim().replace(/\/+$/, '');
   try {
     const updated = await appDb('gocardless_partner_signups')
-      .where({ id: input.signupId })
+      .where({ ...scope, id: input.signupId })
       .update({
         merchant_app_url: appUrl,
         updated_at: appDb.fn.now(),
@@ -318,13 +320,14 @@ export async function activateMerchant(
   input: ActivateMerchantInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ActivateMerchantResponse> {
+  const scope = companyScope(companyCode);
   if (!input.signupId) {
     return { success: false, error: 'No signup ID provided' };
   }
 
   try {
     const signupRow = (await appDb('gocardless_partner_signups')
-      .where({ id: input.signupId })
+      .where({ ...scope, id: input.signupId })
       .first()) as SignupRow | undefined;
 
     if (!signupRow) {
@@ -414,7 +417,7 @@ export async function activateMerchant(
 
     // Mark as activated
     await appDb('gocardless_partner_signups')
-      .where({ id: input.signupId })
+      .where({ ...scope, id: input.signupId })
       .update({ status: 'activated', updated_at: appDb.fn.now() });
 
     return {
@@ -503,6 +506,7 @@ export async function initiatePartnerSignup(
   input: InitiateSignupInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<InitiateSignupResponse> {
+  const scope = companyScope(companyCode);
   const companyName = (input.companyName ?? '').trim();
   const companyEmail = (input.companyEmail ?? '').trim();
   if (!companyEmail) {
@@ -534,6 +538,7 @@ export async function initiatePartnerSignup(
     //   create_partner_signup(...); update_partner_signup(id, status_detail=state)
     const inserted = await appDb('gocardless_partner_signups')
       .insert({
+        ...scope,
         company_name: companyName,
         company_email: companyEmail,
         authorisation_url: authorisationUrl,
@@ -593,6 +598,7 @@ export async function handlePartnerCallback(
   input: PartnerCallbackInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PartnerCallbackResult> {
+  const scope = companyScope(companyCode);
   if (input.error) {
     return {
       ok: false,
@@ -623,6 +629,7 @@ export async function handlePartnerCallback(
     // CSRF validation: the state token we issued in initiate-signup is
     // stored in status_detail of the latest signup row.
     const latest = (await appDb('gocardless_partner_signups')
+      .where({ ...scope })
       .orderBy('id', 'desc')
       .first()) as
       | { id: number; status_detail: string | null }
@@ -675,7 +682,7 @@ export async function handlePartnerCallback(
 
     if (latest) {
       await appDb('gocardless_partner_signups')
-        .where({ id: latest.id })
+        .where({ ...scope, id: latest.id })
         .update({
           status: 'completed',
           completed_at: appDb.fn.now(),

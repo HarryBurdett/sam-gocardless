@@ -17,6 +17,7 @@
  * tables provisioned by migration 001_initial_schema.ts.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface PaymentStats {
   active_mandates: number;
@@ -73,12 +74,14 @@ function thirtyDaysAgoIso(now: Date = new Date()): string {
 
 export async function getPaymentStats(
   appDb: Knex,
+  companyCode: string,
   now: Date = new Date(),
 ): Promise<PaymentStatsResponse> {
+  const scope = companyScope(companyCode);
   try {
     // Active mandates count
     const mandRow = (await appDb('gocardless_mandates')
-      .where({ mandate_status: 'active' })
+      .where({ ...scope, mandate_status: 'active' })
       .count<{ count: number | string }[]>('* as count')) as Array<{
       count: number | string;
     }>;
@@ -86,6 +89,7 @@ export async function getPaymentStats(
 
     // Pending payments — count + sum
     const pendingRow = (await appDb('gocardless_payment_requests')
+      .where({ ...scope })
       .whereIn('status', PENDING_STATUSES)
       .select(
         appDb.raw('COUNT(*) as count'),
@@ -97,7 +101,7 @@ export async function getPaymentStats(
     // This month collected
     const monthStart = firstOfMonthIso(now);
     const monthRow = (await appDb('gocardless_payment_requests')
-      .where({ status: 'paid_out' })
+      .where({ ...scope, status: 'paid_out' })
       .andWhere('created_at', '>=', monthStart)
       .select(
         appDb.raw('COUNT(*) as count'),
@@ -109,7 +113,7 @@ export async function getPaymentStats(
     // Failed payments (last 30 days)
     const thirtyAgo = thirtyDaysAgoIso(now);
     const failedRow = (await appDb('gocardless_payment_requests')
-      .where({ status: 'failed' })
+      .where({ ...scope, status: 'failed' })
       .andWhere('created_at', '>=', thirtyAgo)
       .count<{ count: number | string }[]>('* as count')) as Array<{
       count: number | string;

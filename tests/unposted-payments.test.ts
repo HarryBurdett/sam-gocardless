@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getUnpostedPayments } from '../src/services/unposted-payments.js';
 
+const TEST_COMPANY = 'C';
+
 interface ReqRow {
   id: number;
   status: string;
@@ -58,7 +60,11 @@ function makeAppDb(state: MockState): any {
       update: async (patch: Record<string, unknown>) => {
         let count = 0;
         for (const r of state.requests) {
-          if (Object.entries(conds).every(([k, v]) => (r as any)[k] === v)) {
+          if (
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v)
+          ) {
             Object.assign(r, patch);
             count++;
           }
@@ -67,7 +73,9 @@ function makeAppDb(state: MockState): any {
       },
       then: (cb: (rows: ReqRow[]) => unknown) => {
         let result = state.requests.filter((r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
         if (order) {
           const o = order;
@@ -175,6 +183,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.success).toBe(true);
     expect(result.has_unposted).toBe(false);
@@ -194,6 +203,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(1);
     expect(result.unposted[0]?.id).toBe(3);
@@ -209,6 +219,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {
         isPayoutImported: async (id) => {
           called = id;
@@ -232,6 +243,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(0);
     expect(state.requests[0]?.status).toBe('posted');
@@ -248,6 +260,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(1);
     expect(state.requests[0]?.status).toBe('confirmed');
@@ -268,6 +281,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(1);
   });
@@ -294,6 +308,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(0);
     expect(state.requests[0]?.status).toBe('posted');
@@ -321,6 +336,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_count).toBe(1);
   });
@@ -341,6 +357,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {
         customerNamesByAccount: new Map([['CUST02', 'Acme Ltd']]),
       },
@@ -364,6 +381,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
     );
     expect(result.unposted_total).toBe(40);
   });
@@ -373,6 +391,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { getUnprocessedBatchCount: async () => 3 },
     );
     expect(result.unposted_count).toBe(0);
@@ -403,7 +422,7 @@ describe('getUnpostedPayments', () => {
       return builder;
     };
     appDb.fn = { now: () => '__NOW__' };
-    const result = await getUnpostedPayments(operaDb, appDb);
+    const result = await getUnpostedPayments(operaDb, appDb, TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.has_unposted).toBe(false);
     expect(result.unposted).toHaveLength(0);
@@ -421,6 +440,7 @@ describe('getUnpostedPayments', () => {
     const result = await getUnpostedPayments(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {
         isPayoutImported: async () => {
           throw new Error('email_storage offline');

@@ -6,6 +6,8 @@ import {
   type PaymentInput,
 } from '../src/services/match-customers.js';
 
+const TEST_COMPANY = 'C';
+
 interface Mandate {
   opera_account: string;
   opera_name?: string | null;
@@ -126,6 +128,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [
         {
@@ -162,6 +165,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ amount: 100, mandate_id: 'MD001' }],
     );
@@ -188,6 +192,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ amount: 100, customer_id: 'CU_X' }],
     );
@@ -208,6 +213,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ customer_name: 'DELTA LTD', amount: 100 }],
     );
@@ -226,6 +232,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ customer_name: 'echo', amount: 100 }],
     );
@@ -241,6 +248,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [
         { customer_name: 'Unknown', amount: 100 },
@@ -262,6 +270,7 @@ describe('matchPaymentsHelper', () => {
     const operaState: OperaMockState = { customers: [], receipts: [] };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ mandate_id: 'MD_X', amount: 100 }],
     );
@@ -282,6 +291,7 @@ describe('matchPaymentsHelper', () => {
     };
     const result = await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ customer_name: 'Hotel', customer_id: 'CU_H', amount: 100 }],
     );
@@ -304,6 +314,7 @@ describe('matchPaymentsHelper', () => {
     };
     await matchPaymentsHelper(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [{ mandate_id: 'MD_Z', customer_id: 'CU_Z', amount: 100 }],
     );
@@ -336,6 +347,7 @@ describe('matchCustomersWithDuplicateCheck', () => {
     };
     const result = await matchCustomersWithDuplicateCheck(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [
         {
@@ -363,6 +375,7 @@ describe('matchCustomersWithDuplicateCheck', () => {
     };
     const result = await matchCustomersWithDuplicateCheck(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [
         { amount: 125.0 },  // exact
@@ -388,6 +401,7 @@ describe('matchCustomersWithDuplicateCheck', () => {
     };
     const result = await matchCustomersWithDuplicateCheck(
       makeAppDb(appState),
+      TEST_COMPANY,
       makeOperaDb(operaState),
       [
         { mandate_id: 'MD9', amount: 50 }, // matched
@@ -407,6 +421,7 @@ describe('matchCustomersWithDuplicateCheck', () => {
     failingApp.fn = { now: () => 'NOW()' };
     const result = await matchCustomersWithDuplicateCheck(
       failingApp,
+      TEST_COMPANY,
       makeOperaDb({ customers: [], receipts: [] }),
       [{ amount: 100 }],
     );

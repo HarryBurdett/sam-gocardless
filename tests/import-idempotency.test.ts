@@ -6,6 +6,8 @@ import {
   getImportedEmailIds,
 } from '../src/services/import-idempotency.js';
 
+const TEST_COMPANY = 'C';
+
 interface ImportRow {
   id: number;
   email_id: number | null;
@@ -51,6 +53,12 @@ function makeAppDb(state: MockState): any {
               );
               return sub;
             },
+            whereNull: (col: string) => {
+              subOrPreds.push(
+                (r) => (r as any)[col] === null || (r as any)[col] === undefined,
+              );
+              return sub;
+            },
             orWhere: (col: string, opOr: string, valOr: string) => {
               if (opOr === 'like') {
                 const pattern = String(valOr);
@@ -65,8 +73,23 @@ function makeAppDb(state: MockState): any {
               }
               return sub;
             },
+            orWhereRaw: (sql: string) => {
+              // Best-effort: match `imported_by <> 'ARCHIVE'`
+              const m = sql.match(/(\w+)\s*<>\s*'([^']+)'/);
+              if (m) {
+                const col = m[1]!;
+                const val = m[2]!;
+                subOrPreds.push((r) => (r as any)[col] !== val);
+              } else {
+                // Unknown raw expression — accept (don't filter out).
+                subOrPreds.push(() => true);
+              }
+              return sub;
+            },
           };
-          cond(sub);
+          // Support both `(qb) => qb.where(...)` and the
+          // `function(this){ this.where(...) }` form Knex allows.
+          cond.call(sub, sub);
           // The whole sub-where is one AND-group entry: row matches
           // the sub-where if ANY of the OR preds match.
           preds.and.push((r) => subOrPreds.some((p) => p(r)));
@@ -74,14 +97,22 @@ function makeAppDb(state: MockState): any {
         }
         if (typeof cond === 'object') {
           preds.and.push((r) =>
-            Object.entries(cond).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(cond)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
         }
         return builder;
       },
-      andWhere: (cond: Record<string, unknown>) => {
+      andWhere: (cond: Record<string, unknown> | ((b: any) => void)) => {
+        if (typeof cond === 'function') {
+          // Re-use the where-with-function branch above.
+          return builder.where(cond as any);
+        }
         preds.and.push((r) =>
-          Object.entries(cond).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(cond)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
         return builder;
       },
@@ -130,17 +161,17 @@ describe('isPayoutImported', () => {
         },
       ],
     };
-    expect(await isPayoutImported(makeAppDb(state), 'PO_X')).toBe(true);
+    expect(await isPayoutImported(makeAppDb(state), TEST_COMPANY, 'PO_X')).toBe(true);
   });
 
   it('returns false when payout_id missing', async () => {
     expect(
-      await isPayoutImported(makeAppDb({ rows: [] }), 'PO_X'),
+      await isPayoutImported(makeAppDb({ rows: [] }), TEST_COMPANY, 'PO_X'),
     ).toBe(false);
   });
 
   it('returns false on empty input', async () => {
-    expect(await isPayoutImported(makeAppDb({ rows: [] }), '')).toBe(false);
+    expect(await isPayoutImported(makeAppDb({ rows: [] }), TEST_COMPANY, '')).toBe(false);
   });
 
   it('respects target_system filter', async () => {
@@ -153,12 +184,12 @@ describe('isPayoutImported', () => {
       ],
     };
     expect(
-      await isPayoutImported(makeAppDb(state), 'PO_X', {
+      await isPayoutImported(makeAppDb(state), TEST_COMPANY, 'PO_X', {
         targetSystem: 'opera_3',
       }),
     ).toBe(false);
     expect(
-      await isPayoutImported(makeAppDb(state), 'PO_X', {
+      await isPayoutImported(makeAppDb(state), TEST_COMPANY, 'PO_X', {
         targetSystem: 'opera_se',
       }),
     ).toBe(true);
@@ -176,7 +207,7 @@ describe('isReferenceImported', () => {
       ],
     };
     expect(
-      await isReferenceImported(makeAppDb(state), 'INTSYSUKLTD-AB12CD'),
+      await isReferenceImported(makeAppDb(state), TEST_COMPANY, 'INTSYSUKLTD-AB12CD'),
     ).toBe(true);
   });
 
@@ -191,13 +222,13 @@ describe('isReferenceImported', () => {
       ],
     };
     expect(
-      await isReferenceImported(makeAppDb(state), 'INTSYSUKLTD-AB12CD'),
+      await isReferenceImported(makeAppDb(state), TEST_COMPANY, 'INTSYSUKLTD-AB12CD'),
     ).toBe(true);
   });
 
   it('returns false when neither match', async () => {
     expect(
-      await isReferenceImported(makeAppDb({ rows: [] }), 'X'),
+      await isReferenceImported(makeAppDb({ rows: [] }), TEST_COMPANY, 'X'),
     ).toBe(false);
   });
 });
@@ -212,15 +243,15 @@ describe('isEmailImported', () => {
         },
       ],
     };
-    expect(await isEmailImported(makeAppDb(state), 42)).toBe(true);
+    expect(await isEmailImported(makeAppDb(state), TEST_COMPANY, 42)).toBe(true);
   });
 
   it('returns false when email_id missing', async () => {
-    expect(await isEmailImported(makeAppDb({ rows: [] }), 42)).toBe(false);
+    expect(await isEmailImported(makeAppDb({ rows: [] }), TEST_COMPANY, 42)).toBe(false);
   });
 
   it('rejects bad email_id', async () => {
-    expect(await isEmailImported(makeAppDb({ rows: [] }), 0)).toBe(false);
+    expect(await isEmailImported(makeAppDb({ rows: [] }), TEST_COMPANY, 0)).toBe(false);
   });
 });
 
@@ -234,7 +265,7 @@ describe('getImportedEmailIds', () => {
         { id: 4, email_id: null, payout_id: 'X', bank_reference: '', target_system: 'opera_se' },
       ],
     };
-    const ids = await getImportedEmailIds(makeAppDb(state));
+    const ids = await getImportedEmailIds(makeAppDb(state), TEST_COMPANY);
     expect(ids.sort()).toEqual([10, 20]);
   });
 });

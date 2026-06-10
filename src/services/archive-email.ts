@@ -27,6 +27,7 @@
  */
 import type { Knex } from 'knex';
 import type { SamEmailIngestService } from '../app-context.js';
+import { companyScope } from '../_shared/get-company.js';
 
 export type ArchiveStatus =
   | 'archived'
@@ -61,9 +62,11 @@ export interface ArchiveEmailResponse {
  */
 export async function archiveGocardlessEmail(
   appDb: Knex,
+  companyCode: string,
   input: ArchiveEmailInput,
   emailIngest?: SamEmailIngestService | null,
 ): Promise<ArchiveEmailResponse> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(input.emailId) || input.emailId <= 0) {
     return { success: false, error: 'email_id is required (positive number)' };
   }
@@ -73,6 +76,7 @@ export async function archiveGocardlessEmail(
   let trackingError: string | null = null;
   try {
     await appDb('gocardless_imports').insert({
+      ...scope,
       email_id: input.emailId,
       target_system: 'archived',
       bank_reference: 'ARCHIVED',

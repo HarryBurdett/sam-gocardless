@@ -20,6 +20,7 @@
  *   Picks the FIRST match (preserves Python's non-stable order).
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 const FREQUENCY_MAP: Record<string, { unit: string; count: number }> = {
   W: { unit: 'weekly', count: 1 },
@@ -167,14 +168,16 @@ function frequencyDetails(
 export async function getRepeatDocuments(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   opts: GetRepeatDocumentsOptions = {},
 ): Promise<GetRepeatDocumentsResponse> {
+  const scope = companyScope(companyCode);
   const requireMandate = opts.requireMandate !== false;
   const subTag = opts.subscriptionTag ?? 'SUB';
   try {
     // 1. Active mandates lookup keyed by opera_account
     const mandateRows = (await appDb('gocardless_mandates')
-      .where({ mandate_status: 'active' })
+      .where({ ...scope, mandate_status: 'active' })
       .select('mandate_id', 'opera_account')) as unknown as MandateRow[];
     const mandateLookup = new Map<string, MandateRow>();
     for (const m of mandateRows ?? []) {
@@ -184,6 +187,7 @@ export async function getRepeatDocuments(
 
     // 2. Active/paused subscriptions grouped by opera_account
     const subRows = (await appDb('gocardless_subscriptions')
+      .where({ ...scope })
       .select(
         'subscription_id',
         'opera_account',
@@ -207,10 +211,12 @@ export async function getRepeatDocuments(
 
     // 3. Subscriptions linked to specific docs via junction table — used
     //    for "has_subscription" + mismatch detection.
-    const docLinks = (await appDb('gocardless_subscription_documents').select(
-      'subscription_id',
-      'source_doc',
-    )) as unknown as Array<{
+    const docLinks = (await appDb('gocardless_subscription_documents')
+      .where({ ...scope })
+      .select(
+        'subscription_id',
+        'source_doc',
+      )) as unknown as Array<{
       subscription_id: string | null;
       source_doc: string | null;
     }>;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getPaymentStats } from '../src/services/payment-stats.js';
 
+const TEST_COMPANY = 'C';
+
 interface Mandate {
   mandate_status: string;
 }
@@ -89,7 +91,7 @@ describe('getPaymentStats', () => {
       requests: [],
     };
     const db = makeAppDb(state);
-    const result = await getPaymentStats(db, new Date('2026-04-15T12:00:00Z'));
+    const result = await getPaymentStats(db, TEST_COMPANY, new Date('2026-04-15T12:00:00Z'));
 
     expect(result.success).toBe(true);
     expect(result.active_mandates).toBe(2);
@@ -109,7 +111,7 @@ describe('getPaymentStats', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await getPaymentStats(db, new Date('2026-04-15T12:00:00Z'));
+    const result = await getPaymentStats(db, TEST_COMPANY, new Date('2026-04-15T12:00:00Z'));
 
     expect(result.pending_count).toBe(4);
     expect(result.pending_amount).toBe(250);
@@ -129,7 +131,7 @@ describe('getPaymentStats', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await getPaymentStats(db, new Date('2026-04-15T12:00:00Z'));
+    const result = await getPaymentStats(db, TEST_COMPANY, new Date('2026-04-15T12:00:00Z'));
 
     expect(result.month_collected_count).toBe(2);
     expect(result.month_collected_amount).toBe(1250);
@@ -148,7 +150,7 @@ describe('getPaymentStats', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await getPaymentStats(db, now);
+    const result = await getPaymentStats(db, TEST_COMPANY, now);
 
     expect(result.failed_count_30d).toBe(2);
   });
@@ -161,7 +163,7 @@ describe('getPaymentStats', () => {
       ],
     };
     const db = makeAppDb(state);
-    const result = await getPaymentStats(db, new Date('2026-04-15T12:00:00Z'));
+    const result = await getPaymentStats(db, TEST_COMPANY, new Date('2026-04-15T12:00:00Z'));
 
     expect(result.month_collected_formatted).toBe('£1,234,567.50');
   });
@@ -171,7 +173,7 @@ describe('getPaymentStats', () => {
       throw new Error('table missing');
     };
     db.raw = (s: string) => s;
-    const result = await getPaymentStats(db);
+    const result = await getPaymentStats(db, TEST_COMPANY);
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/table missing/);

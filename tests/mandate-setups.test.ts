@@ -6,6 +6,8 @@ import {
   checkPendingMandateSetups,
 } from '../src/services/mandate-setups.js';
 
+const TEST_COMPANY = 'C';
+
 interface SetupRow {
   id: number;
   opera_account: string;
@@ -46,7 +48,9 @@ function makeAppDb(state: MockState): any {
       },
       first: () => {
         const found = state.rows.find((r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
         return Promise.resolve(found);
       },
@@ -54,7 +58,9 @@ function makeAppDb(state: MockState): any {
         let count = 0;
         for (const r of state.rows) {
           if (
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v)
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v)
           ) {
             Object.assign(r, data);
             count++;
@@ -88,7 +94,9 @@ function makeAppDb(state: MockState): any {
       },
       then: (cb: (rows: SetupRow[]) => unknown) => {
         let rows = state.rows.filter((r) =>
-          Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+          Object.entries(conds)
+            .filter(([k]) => k !== 'company_code')
+            .every(([k, v]) => (r as any)[k] === v),
         );
         if (order) {
           rows = [...rows].sort((a, b) => {
@@ -137,7 +145,7 @@ describe('listMandateSetups', () => {
         emptySetup({ id: 3 }),
       ],
     };
-    const result = await listMandateSetups(makeAppDb(state));
+    const result = await listMandateSetups(makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.setups[0]?.id).toBe(3);
   });
@@ -152,7 +160,7 @@ describe('listMandateSetups', () => {
         emptySetup({ id: 5, status: 'failed' }),
       ],
     };
-    const result = await listMandateSetups(makeAppDb(state));
+    const result = await listMandateSetups(makeAppDb(state), TEST_COMPANY);
     expect(result.pending_count).toBe(2);
   });
 });
@@ -162,7 +170,7 @@ describe('cancelMandateSetup', () => {
     const state: MockState = {
       rows: [emptySetup({ id: 1, status: 'pending' })],
     };
-    const result = await cancelMandateSetup(makeAppDb(state), 1);
+    const result = await cancelMandateSetup(makeAppDb(state), TEST_COMPANY, 1);
     expect(result.success).toBe(true);
     expect(result.message).toMatch(/Acme Ltd/);
     expect(state.rows[0]?.status).toBe('cancelled');
@@ -173,21 +181,21 @@ describe('cancelMandateSetup', () => {
     const state: MockState = {
       rows: [emptySetup({ id: 1, status: 'completed' })],
     };
-    const result = await cancelMandateSetup(makeAppDb(state), 1);
+    const result = await cancelMandateSetup(makeAppDb(state), TEST_COMPANY, 1);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/already completed/);
   });
 
   it('returns 404 when setup not found', async () => {
     const state: MockState = { rows: [] };
-    const result = await cancelMandateSetup(makeAppDb(state), 999);
+    const result = await cancelMandateSetup(makeAppDb(state), TEST_COMPANY, 999);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
 
   it('rejects bad setup_id', async () => {
     const state: MockState = { rows: [] };
-    const result = await cancelMandateSetup(makeAppDb(state), 0);
+    const result = await cancelMandateSetup(makeAppDb(state), TEST_COMPANY, 0);
     expect(result.success).toBe(false);
   });
 
@@ -195,7 +203,7 @@ describe('cancelMandateSetup', () => {
     const state: MockState = {
       rows: [emptySetup({ id: 1, opera_name: '', opera_account: 'CUST_X' })],
     };
-    const result = await cancelMandateSetup(makeAppDb(state), 1);
+    const result = await cancelMandateSetup(makeAppDb(state), TEST_COMPANY, 1);
     expect(result.message).toMatch(/CUST_X/);
   });
 });
@@ -217,6 +225,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: '', customerEmail: 'a@b.com' },
       okRemote(),
       okEmail,
@@ -229,6 +238,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: '' },
       okRemote(),
       okEmail,
@@ -241,6 +251,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: 'not-an-email' },
       okRemote(),
       okEmail,
@@ -253,6 +264,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       {
         operaAccount: 'CUST01',
         operaName: 'Acme Ltd',
@@ -273,6 +285,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: 'a@b.com' },
       okRemote(),
       async () => ({ success: false, error: 'SMTP refused connection' }),
@@ -288,6 +301,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: 'a@b.com' },
       {
         createBillingRequest: async () => ({
@@ -307,6 +321,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: 'a@b.com' },
       {
         createBillingRequest: async () => ({ success: true, id: 'BR1' }),
@@ -327,6 +342,7 @@ describe('createMandateSetup', () => {
     let captured = { subject: '', body: '' };
     await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       {
         operaAccount: 'CUST01',
         customerEmail: 'a@b.com',
@@ -350,6 +366,7 @@ describe('createMandateSetup', () => {
     const state: MockState = { rows: [] };
     const result = await createMandateSetup(
       makeAppDb(state),
+      TEST_COMPANY,
       { operaAccount: 'CUST01', customerEmail: 'a@b.com' },
       okRemote(),
       undefined,
@@ -376,7 +393,7 @@ describe('checkPendingMandateSetups', () => {
       getBillingRequest: async () => ({ success: true }),
       getMandate: async () => ({ success: true }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(result.success).toBe(true);
     expect(result.updates).toHaveLength(0);
     expect(result.message).toMatch(/No pending/);
@@ -410,6 +427,7 @@ describe('checkPendingMandateSetups', () => {
     };
     const result = await checkPendingMandateSetups(
       makeAppDb(state),
+      TEST_COMPANY,
       remote,
       completeSetup,
     );
@@ -436,7 +454,7 @@ describe('checkPendingMandateSetups', () => {
         status: 'pending_customer_approval',
       }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(state.rows[0]?.status).toBe('mandate_created');
     expect(result.updates[0]?.new_status).toBe('mandate_created');
   });
@@ -453,7 +471,7 @@ describe('checkPendingMandateSetups', () => {
       }),
       getMandate: async () => ({ success: true, status: 'expired' }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(state.rows[0]?.status).toBe('failed');
     expect(result.updates[0]?.new_status).toBe('failed');
   });
@@ -466,7 +484,7 @@ describe('checkPendingMandateSetups', () => {
       getBillingRequest: async () => ({ success: true, status: 'pending' }),
       getMandate: async () => ({ success: true }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(state.rows[0]?.status).toBe('authorisation_pending');
     expect(result.updates[0]?.new_status).toBe('authorisation_pending');
   });
@@ -479,7 +497,7 @@ describe('checkPendingMandateSetups', () => {
       getBillingRequest: async () => ({ success: true, status: 'cancelled' }),
       getMandate: async () => ({ success: true }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(state.rows[0]?.status).toBe('cancelled');
   });
 
@@ -501,7 +519,7 @@ describe('checkPendingMandateSetups', () => {
       },
       getMandate: async () => ({ success: true }),
     };
-    const result = await checkPendingMandateSetups(makeAppDb(state), remote);
+    const result = await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(result.success).toBe(true);
     expect(result.updates).toHaveLength(2);
     expect(result.updates[0]?.error).toMatch(/GC API down/);
@@ -525,6 +543,7 @@ describe('checkPendingMandateSetups', () => {
     };
     const result = await checkPendingMandateSetups(
       makeAppDb(state),
+      TEST_COMPANY,
       remote,
       completeSetup,
     );
@@ -545,7 +564,7 @@ describe('checkPendingMandateSetups', () => {
       },
       getMandate: async () => ({ success: true }),
     };
-    await checkPendingMandateSetups(makeAppDb(state), remote);
+    await checkPendingMandateSetups(makeAppDb(state), TEST_COMPANY, remote);
     expect(called).toBe(0);
   });
 });

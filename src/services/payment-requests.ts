@@ -10,6 +10,7 @@
  * Filters: status, opera_account. Default limit 100.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface PaymentRequest {
   id: number;
@@ -65,14 +66,16 @@ export interface GetPaymentRequestResponse {
 
 export async function getPaymentRequest(
   appDb: Knex,
+  companyCode: string,
   requestId: number,
 ): Promise<GetPaymentRequestResponse> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(requestId) || requestId <= 0) {
     return { success: false, error: 'request_id must be a positive number' };
   }
   try {
     const row = (await appDb('gocardless_payment_requests')
-      .where({ id: requestId })
+      .where({ ...scope, id: requestId })
       .first()) as
       | (Record<string, unknown> & {
           id: number;
@@ -87,7 +90,7 @@ export async function getPaymentRequest(
     if (acct) {
       try {
         const mand = (await appDb('gocardless_mandates')
-          .where({ opera_account: acct })
+          .where({ ...scope, opera_account: acct })
           .first()) as { opera_name: string | null } | undefined;
         if (mand?.opera_name) customerName = mand.opera_name.trim() || acct;
       } catch {
@@ -157,10 +160,13 @@ export interface SyncPaymentStatusesResponse {
 
 export async function syncPaymentStatuses(
   appDb: Knex,
+  companyCode: string,
   syncRemote: SyncRemote,
 ): Promise<SyncPaymentStatusesResponse> {
+  const scope = companyScope(companyCode);
   try {
     const requestsToSync = (await appDb('gocardless_payment_requests')
+      .where({ ...scope })
       .whereIn('status', PENDING_SYNC_STATUSES)
       .select('id', 'payment_id', 'status')) as unknown as Array<{
       id: number;
@@ -188,7 +194,7 @@ export async function syncPaymentStatuses(
         const newStatus = (r.payment.status ?? '').toString().trim();
         const newChargeDate = (r.payment.charge_date ?? '').toString().trim();
         if (newStatus && newStatus !== req.status) {
-          await appDb('gocardless_payment_requests').where({ id: req.id }).update({
+          await appDb('gocardless_payment_requests').where({ ...scope, id: req.id }).update({
             status: newStatus,
             charge_date: newChargeDate || null,
             updated_at: appDb.fn.now(),
@@ -237,15 +243,17 @@ export interface CancelPaymentRequestResponse {
 
 export async function cancelPaymentRequest(
   appDb: Knex,
+  companyCode: string,
   requestId: number,
   cancelRemote?: (paymentId: string) => Promise<{ success: boolean; error?: string }>,
 ): Promise<CancelPaymentRequestResponse> {
+  const scope = companyScope(companyCode);
   if (!Number.isFinite(requestId) || requestId <= 0) {
     return { success: false, error: 'request_id must be a positive number' };
   }
   try {
     const row = (await appDb('gocardless_payment_requests')
-      .where({ id: requestId })
+      .where({ ...scope, id: requestId })
       .first()) as
       | { id: number; status: string | null; payment_id: string | null }
       | undefined;
@@ -275,7 +283,7 @@ export async function cancelPaymentRequest(
     }
 
     // Always mark local as cancelled
-    await appDb('gocardless_payment_requests').where({ id: requestId }).update({
+    await appDb('gocardless_payment_requests').where({ ...scope, id: requestId }).update({
       status: 'cancelled',
       error_message: 'Cancelled by user',
       updated_at: appDb.fn.now(),
@@ -295,11 +303,14 @@ export async function cancelPaymentRequest(
 
 export async function listPaymentRequests(
   appDb: Knex,
+  companyCode: string,
   opts: ListPaymentRequestsOptions = {},
 ): Promise<ListPaymentRequestsResponse> {
+  const scope = companyScope(companyCode);
   try {
     const limit = opts.limit ?? 100;
     let query = appDb('gocardless_payment_requests')
+      .where({ ...scope })
       .orderBy('created_at', 'desc')
       .limit(limit);
     if (opts.status) {
@@ -336,6 +347,7 @@ export async function listPaymentRequests(
     if (accounts.length > 0) {
       try {
         const mandates = (await appDb('gocardless_mandates')
+          .where({ ...scope })
           .whereIn('opera_account', accounts)
           .select('opera_account', 'opera_name')) as unknown as Array<{
           opera_account: string | null;

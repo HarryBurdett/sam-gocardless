@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest';
 import { runHealthCheck } from '../src/services/health-check.js';
 import type { GoCardlessSettings } from '../src/services/settings.js';
 
+const TEST_COMPANY = 'C';
+
 function makeMockOpera(canned: {
   banks?: string[];
   customers?: string[];
@@ -31,19 +33,28 @@ function makeMockApp(canned: {
   paymentRequestAccounts?: string[];
   missingTables?: boolean;
 }): any {
-  const db: any = () => ({});
-  db.raw = async (sql: string) => {
-    if (canned.missingTables) {
-      throw new Error('Invalid object name');
-    }
-    if (sql.includes('gocardless_mandates')) {
-      return (canned.mandateAccounts ?? []).map((a) => ({ opera_account: a }));
-    }
-    if (sql.includes('gocardless_payment_requests')) {
-      return (canned.paymentRequestAccounts ?? []).map((a) => ({ opera_account: a }));
-    }
-    return [];
+  const db: any = (table: string) => {
+    const builder: any = {
+      where: () => builder,
+      whereNotNull: () => builder,
+      andWhereRaw: () => builder,
+      distinct: () => builder,
+      select: async () => {
+        if (canned.missingTables) {
+          throw new Error('Invalid object name');
+        }
+        if (table === 'gocardless_mandates') {
+          return (canned.mandateAccounts ?? []).map((a) => ({ opera_account: a }));
+        }
+        if (table === 'gocardless_payment_requests') {
+          return (canned.paymentRequestAccounts ?? []).map((a) => ({ opera_account: a }));
+        }
+        return [];
+      },
+    };
+    return builder;
   };
+  db.raw = async () => [];
   return db;
 }
 
@@ -84,6 +95,7 @@ describe('runHealthCheck', () => {
     const result = await runHealthCheck({
       operaDb: opera,
       appDb,
+      companyCode: TEST_COMPANY,
       settings,
     });
 
@@ -101,6 +113,7 @@ describe('runHealthCheck', () => {
     const result = await runHealthCheck({
       operaDb: opera,
       appDb: null,
+      companyCode: TEST_COMPANY,
       settings,
     });
 
@@ -116,6 +129,7 @@ describe('runHealthCheck', () => {
     const result = await runHealthCheck({
       operaDb: opera,
       appDb: null,
+      companyCode: TEST_COMPANY,
       settings: null,
     });
 
@@ -139,6 +153,7 @@ describe('runHealthCheck', () => {
     const result = await runHealthCheck({
       operaDb: opera,
       appDb,
+      companyCode: TEST_COMPANY,
       settings,
     });
 
@@ -153,6 +168,7 @@ describe('runHealthCheck', () => {
     const result = await runHealthCheck({
       operaDb: opera,
       appDb: null,
+      companyCode: TEST_COMPANY,
       settings: null,
     });
 

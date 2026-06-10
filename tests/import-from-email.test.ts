@@ -9,6 +9,8 @@ import type {
   IncomingPayment,
 } from '../src/services/import-batch.js';
 
+const TEST_COMPANY = 'C';
+
 // Reuse the OperaDb mock from import-batch.test.ts patterns
 function makeOperaDb(state: {
   banks: Array<{ nk_acnt: string; nk_sort: string; nk_number: string; nk_desc: string }>;
@@ -98,6 +100,7 @@ describe('importGocardlessBatchFromEmail', () => {
     const result = await importGocardlessBatchFromEmail(
       makeOperaDb({ banks: KNOWN_BANKS }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         emailId: 0, // invalid
         bankCode: 'BC010',
@@ -134,6 +137,7 @@ describe('importGocardlessBatchFromEmail', () => {
     const result = await importGocardlessBatchFromEmail(
       makeOperaDb({ banks: KNOWN_BANKS }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         emailId: 42,
         bankCode: 'BC010',
@@ -171,6 +175,7 @@ describe('importGocardlessBatchFromEmail', () => {
     const result = await importGocardlessBatchFromEmail(
       makeOperaDb({ banks: KNOWN_BANKS }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         emailId: 42,
         bankCode: 'BC010',
@@ -206,6 +211,7 @@ describe('importGocardlessBatchFromEmail', () => {
     const result = await importGocardlessBatchFromEmail(
       makeOperaDb({ banks: KNOWN_BANKS }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         emailId: 42,
         bankCode: 'BC010',
@@ -241,6 +247,7 @@ describe('importGocardlessBatchFromEmail', () => {
     const result = await importGocardlessBatchFromEmail(
       makeOperaDb({ banks: KNOWN_BANKS }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         emailId: 42,
         bankCode: 'BC010',

@@ -1713,7 +1713,7 @@ async function postDestinationTransfer(
 // ---------------------------------------------------------------------
 
 export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
-  async postBatch(operaDb, request, appDb = null): Promise<{
+  async postBatch(operaDb, request, appDb = null, companyCode): Promise<{
     success: boolean;
     records_imported: number;
     batch_ref?: string | null;
@@ -1882,7 +1882,7 @@ export const gocardlessBatchPostingExecutor: BatchPostingExecutor = {
           // we surface a warning so the user can allocate manually in
           // Opera.
           if (p.auto_allocate) {
-            const allocResult = await autoAllocateReceipt(trx, appDb, {
+            const allocResult = await autoAllocateReceipt(trx, appDb, companyCode ?? null, {
               customerAccount: cust.account,
               receiptRef: request.reference,
               receiptAmount: amountPounds,

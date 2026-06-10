@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { searchReceipts } from '../src/services/receipt-search.js';
 
+const TEST_COMPANY = 'C';
+
 interface MockOpts {
   imports?: Array<{
     id: number;
@@ -33,7 +35,9 @@ function makeAppDb(opts: MockOpts): any {
       },
       then: (cb: (rows: unknown[]) => unknown) => {
         const filtered = (opts.imports ?? []).filter((i) =>
-          Object.keys(filters).every((k) => (i as any)[k] === filters[k]),
+          Object.keys(filters)
+            .filter((k) => k !== 'company_code')
+            .every((k) => (i as any)[k] === filters[k]),
         );
         return Promise.resolve(cb(filtered.slice(0, limitN)));
       },
@@ -71,7 +75,7 @@ describe('searchReceipts', () => {
       { sn_account: 'BETA', sn_name: 'Beta Corp' },
     ]);
 
-    const result = await searchReceipts(appDb, operaDb);
+    const result = await searchReceipts(appDb, TEST_COMPANY, operaDb);
 
     expect(result.success).toBe(true);
     expect(result.total).toBe(2);
@@ -96,7 +100,7 @@ describe('searchReceipts', () => {
       ],
     });
 
-    const result = await searchReceipts(appDb, null, { customer: 'acme' });
+    const result = await searchReceipts(appDb, TEST_COMPANY, null, { customer: 'acme' });
 
     expect(result.total).toBe(1);
     expect(result.receipts[0]?.customer_account).toBe('ACME');
@@ -115,7 +119,7 @@ describe('searchReceipts', () => {
         },
       ],
     });
-    const result = await searchReceipts(appDb, null, { customer: 'ghost' });
+    const result = await searchReceipts(appDb, TEST_COMPANY, null, { customer: 'ghost' });
     expect(result.total).toBe(0);
   });
 
@@ -132,7 +136,7 @@ describe('searchReceipts', () => {
         },
       ],
     });
-    const result = await searchReceipts(appDb, null);
+    const result = await searchReceipts(appDb, TEST_COMPANY, null);
     expect(result.success).toBe(true);
     expect(result.total).toBe(0);
   });
@@ -154,7 +158,7 @@ describe('searchReceipts', () => {
         },
       ],
     });
-    const result = await searchReceipts(appDb, null, { limit: 2 });
+    const result = await searchReceipts(appDb, TEST_COMPANY, null, { limit: 2 });
     expect(result.total).toBe(2);
   });
 });

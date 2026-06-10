@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getDueInvoices } from '../src/services/due-invoices.js';
 
+const TEST_COMPANY = 'C';
+
 interface InvoiceRow {
   st_account: string;
   sn_name: string;
@@ -89,7 +91,9 @@ function makeAppDb(state: MockState): any {
       select: async (..._cols: string[]) => {
         if (table === 'gocardless_mandates') {
           return state.mandates.filter((r) =>
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
         }
         if (table === 'gocardless_subscriptions') return state.subs;
@@ -134,6 +138,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -163,6 +168,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -183,6 +189,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { advanceDate: 'not-a-date' },
       TODAY,
     );
@@ -204,6 +211,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { advanceDate: '2026-05-31' },
       TODAY,
     );
@@ -225,6 +233,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       { includeFuture: false, advanceDate: '2026-05-31' },
       TODAY,
     );
@@ -251,6 +260,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -279,6 +289,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -305,6 +316,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -336,6 +348,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );
@@ -356,6 +369,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {
         fetchExternalPendingPayments: async () => [
           {
@@ -389,6 +403,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {
         fetchExternalPendingPayments: async () => {
           throw new Error('GC API down');
@@ -419,6 +434,7 @@ describe('getDueInvoices', () => {
     const result = await getDueInvoices(
       makeOperaDb(state),
       makeAppDb(state),
+      TEST_COMPANY,
       {},
       TODAY,
     );

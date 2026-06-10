@@ -308,6 +308,7 @@ export function createRouter(ctx: AppContext): Router {
       const result = await runHealthCheck({
         operaDb,
         appDb,
+        companyCode: company,
         settings,
       });
       res.json(result);
@@ -565,7 +566,7 @@ export function createRouter(ctx: AppContext): Router {
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const fromDate = typeof req.query.from_date === 'string' ? req.query.from_date : null;
       const toDate = typeof req.query.to_date === 'string' ? req.query.to_date : null;
-      const result = await getImportHistory(appDb, operaDb, {
+      const result = await getImportHistory(appDb, company, operaDb, {
         limit,
         fromDate,
         toDate,
@@ -587,10 +588,12 @@ export function createRouter(ctx: AppContext): Router {
   router.post('/api/gocardless/skip-payout', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
       const q = req.query;
       const body = (req.body ?? null) as Array<Record<string, unknown>> | null;
-      const result = await skipPayout(appDb, {
+      const result = await skipPayout(appDb, company, {
         payoutId: String(q.payout_id ?? ''),
         bankReference: String(q.bank_reference ?? ''),
         grossAmount: Number(q.gross_amount ?? 0),
@@ -655,6 +658,8 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const emailId = Number(req.query.email_id);
         const archiveFolder = String(
@@ -662,6 +667,7 @@ export function createRouter(ctx: AppContext): Router {
         );
         const result = await archiveGocardlessEmail(
           appDb,
+          company,
           { emailId, archiveFolder },
           ctx.emailIngest ?? null,
         );
@@ -781,6 +787,7 @@ export function createRouter(ctx: AppContext): Router {
 
       const result = await fetchGocardlessApiPayouts(
         appDb,
+        company,
         operaDb,
         client,
         environment,
@@ -824,7 +831,7 @@ export function createRouter(ctx: AppContext): Router {
       const toDate =
         typeof req.query.to_date === 'string' ? req.query.to_date : null;
       const limit = req.query.limit ? Number(req.query.limit) : 200;
-      const result = await searchReceipts(appDb, operaDb, {
+      const result = await searchReceipts(appDb, company, operaDb, {
         customer,
         fromDate,
         toDate,
@@ -854,8 +861,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        res.json(await checkOrphanedImports(operaDb, appDb));
+        res.json(await checkOrphanedImports(operaDb, appDb, company));
       } catch (err: any) {
         ctx.logger.error('GoCardless orphan check failed', err);
         res.status(500).json({ success: false, error: friendlyDbError(err) });
@@ -878,8 +887,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        res.json(await recoverGocardlessFromRestore(operaDb, appDb));
+        res.json(await recoverGocardlessFromRestore(operaDb, appDb, company));
       } catch (err: any) {
         ctx.logger.error('GoCardless recover-from-restore failed', err);
         res.status(500).json({ success: false, error: friendlyDbError(err) });
@@ -897,12 +908,14 @@ export function createRouter(ctx: AppContext): Router {
   router.delete('/api/gocardless/import-history', async (req: Request, res: Response) => {
     const appDb = getAppDb(req, res);
     if (!appDb) return;
+    const company = requireCompany(req, res);
+    if (!company) return;
     try {
       const fromDate =
         typeof req.query.from_date === 'string' ? req.query.from_date : null;
       const toDate =
         typeof req.query.to_date === 'string' ? req.query.to_date : null;
-      const result = await clearImportHistory(appDb, { fromDate, toDate });
+      const result = await clearImportHistory(appDb, company, { fromDate, toDate });
       res.json(result);
     } catch (err: any) {
       ctx.logger.error('Clear import history failed', err);
@@ -922,13 +935,15 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const id = Number(req.params.record_id);
         if (!Number.isFinite(id)) {
           res.status(400).json({ success: false, error: 'Invalid record_id' });
           return;
         }
-        const result = await deleteImportRecord(appDb, id);
+        const result = await deleteImportRecord(appDb, company, id);
         if (!result.success && result.error === 'Record not found') {
           res.status(404).json(result);
           return;
@@ -985,6 +1000,7 @@ export function createRouter(ctx: AppContext): Router {
         const settings = await loadSettings(appDb, company);
         const result = await matchCustomersWithDuplicateCheck(
           appDb,
+          company,
           operaDb,
           payments,
           { defaultBatchType: settings.default_batch_type ?? null },
@@ -1055,8 +1071,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await listMandates(appDb, {
+        const result = await listMandates(appDb, company, {
           status:
             typeof req.query.status === 'string' ? req.query.status : null,
           operaAccount:
@@ -1084,8 +1102,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await listUnlinkedMandates(appDb);
+        const result = await listUnlinkedMandates(appDb, company);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('List unlinked mandates failed', err);
@@ -1165,6 +1185,7 @@ export function createRouter(ctx: AppContext): Router {
         };
         const result = await syncMandatesFromGocardless(
           appDb,
+          company,
           fetchPage,
           fetchCustomer,
           customers,
@@ -1254,7 +1275,7 @@ export function createRouter(ctx: AppContext): Router {
           }
         }
         // 2. Local upsert
-        const linkResult = await linkMandate(appDb, {
+        const linkResult = await linkMandate(appDb, company, {
           operaAccount,
           mandateId,
           operaName,
@@ -1368,8 +1389,10 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await getEligibleCustomers(appDb, operaDb);
+        const result = await getEligibleCustomers(appDb, company, operaDb);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Eligible customers failed', err);
@@ -1475,6 +1498,7 @@ export function createRouter(ctx: AppContext): Router {
           });
         const result = await requestPayment(
           appDb,
+          company,
           input,
           {
             request_statement_reference: settings.request_statement_reference ?? '',
@@ -1586,6 +1610,7 @@ export function createRouter(ctx: AppContext): Router {
           });
         const result = await requestBulkPayments(
           appDb,
+          company,
           inputs,
           {
             request_statement_reference: settings.request_statement_reference ?? '',
@@ -1628,12 +1653,16 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         // Build customer-name lookup from local mandates
-        const mandateRows = (await appDb('gocardless_mandates').select(
-          'opera_account',
-          'opera_name',
-        )) as unknown as Array<{
+        const mandateRows = (await appDb('gocardless_mandates')
+          .where({ company_code: company })
+          .select(
+            'opera_account',
+            'opera_name',
+          )) as unknown as Array<{
           opera_account: string | null;
           opera_name: string | null;
         }>;
@@ -1645,7 +1674,7 @@ export function createRouter(ctx: AppContext): Router {
             customerNames.set(acct, name);
           }
         }
-        const result = await getUnpostedPayments(operaDb, appDb, {
+        const result = await getUnpostedPayments(operaDb, appDb, company, {
           customerNamesByAccount: customerNames,
         });
         res.json(result);
@@ -1684,13 +1713,15 @@ export function createRouter(ctx: AppContext): Router {
       if (!operaDb) return;
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const overdueOnly =
           req.query.overdue_only === 'true' || req.query.overdue_only === '1';
         const minAmount = req.query.min_amount
           ? Number(req.query.min_amount)
           : 0;
-        const result = await getCollectableInvoices(operaDb, appDb, {
+        const result = await getCollectableInvoices(operaDb, appDb, company, {
           overdueOnly,
           minAmount,
         });
@@ -1744,7 +1775,7 @@ export function createRouter(ctx: AppContext): Router {
                 req.query.include_future === 'false' ||
                 req.query.include_future === '0'
               );
-        const result = await getDueInvoices(operaDb, appDb, {
+        const result = await getDueInvoices(operaDb, appDb, company, {
           advanceDate,
           includeFuture,
           subscriptionTag: settings.subscription_tag ?? 'SUB',
@@ -1790,7 +1821,7 @@ export function createRouter(ctx: AppContext): Router {
           requireMandateRaw === undefined
             ? true
             : !(requireMandateRaw === 'false' || requireMandateRaw === '0');
-        const result = await getRepeatDocuments(operaDb, appDb, {
+        const result = await getRepeatDocuments(operaDb, appDb, company, {
           requireMandate,
           subscriptionTag: settings.subscription_tag ?? 'SUB',
         });
@@ -1929,6 +1960,7 @@ export function createRouter(ctx: AppContext): Router {
             .trim() || 'Our Company';
         const result = await createMandateSetup(
           appDb,
+          company,
           {
             operaAccount: String(body.opera_account ?? ''),
             operaName: typeof body.opera_name === 'string' ? body.opera_name : null,
@@ -2050,7 +2082,7 @@ export function createRouter(ctx: AppContext): Router {
             // best-effort
           }
           // 3. Local link
-          const linkResult = await linkMandate(appDb, {
+          const linkResult = await linkMandate(appDb, company, {
             operaAccount: input.setup.opera_account,
             mandateId: input.mandateId,
             operaName: input.setup.opera_name || null,
@@ -2084,6 +2116,7 @@ export function createRouter(ctx: AppContext): Router {
         };
         const result = await checkPendingMandateSetups(
           appDb,
+          company,
           remote,
           completeSetup,
         );
@@ -2107,8 +2140,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await listMandateSetups(appDb);
+        const result = await listMandateSetups(appDb, company);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('List mandate setups failed', err);
@@ -2129,9 +2164,11 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const id = Number(req.params.setup_id);
-        const result = await cancelMandateSetup(appDb, id);
+        const result = await cancelMandateSetup(appDb, company, id);
         if (!result.success) {
           res
             .status(result.error === 'Setup request not found' ? 404 : 400)
@@ -2174,6 +2211,7 @@ export function createRouter(ctx: AppContext): Router {
         const cancelRemote = async (id: string) => client.cancelMandate(id);
         const result = await cancelMandate(
           appDb,
+          company,
           String(req.params.mandate_id ?? ''),
           cancelRemote,
         );
@@ -2205,9 +2243,12 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const result = await unlinkMandate(
           appDb,
+          company,
           String(req.params.mandate_id ?? ''),
         );
         if (!result.success) {
@@ -2889,8 +2930,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await listPaymentRequests(appDb, {
+        const result = await listPaymentRequests(appDb, company, {
           status:
             typeof req.query.status === 'string' ? req.query.status : null,
           operaAccount:
@@ -2936,7 +2979,7 @@ export function createRouter(ctx: AppContext): Router {
         }
         const syncRemote = async (paymentId: string) =>
           client.getPayment(paymentId);
-        const result = await syncPaymentStatuses(appDb, syncRemote);
+        const result = await syncPaymentStatuses(appDb, company, syncRemote);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Sync payment statuses failed', err);
@@ -2957,9 +3000,11 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
         const id = Number(req.params.request_id);
-        const result = await getPaymentRequest(appDb, id);
+        const result = await getPaymentRequest(appDb, company, id);
         if (!result.success) {
           res
             .status(result.error === 'Payment request not found' ? 404 : 400)
@@ -3002,7 +3047,7 @@ export function createRouter(ctx: AppContext): Router {
               return { success: r.success, error: r.error };
             }
           : undefined;
-        const result = await cancelPaymentRequest(appDb, id, cancelRemote);
+        const result = await cancelPaymentRequest(appDb, company, id, cancelRemote);
         if (!result.success) {
           res
             .status(result.error === 'Payment request not found' ? 404 : 400)
@@ -3031,8 +3076,10 @@ export function createRouter(ctx: AppContext): Router {
     async (req: Request, res: Response) => {
       const appDb = getAppDb(req, res);
       if (!appDb) return;
+      const company = requireCompany(req, res);
+      if (!company) return;
       try {
-        const result = await getPaymentStats(appDb);
+        const result = await getPaymentStats(appDb, company);
         res.json(result);
       } catch (err: any) {
         ctx.logger.error('Payment stats failed', err);
@@ -3554,6 +3601,7 @@ export function createRouter(ctx: AppContext): Router {
         const result = await scanGocardlessEmails(
           operaDb,
           appDb,
+          company,
           adapter,
           {
             fromDate,
@@ -3619,6 +3667,7 @@ export function createRouter(ctx: AppContext): Router {
         const payments = readArrayBody<IncomingPayment>(req, 'payments');
         const settings = await loadSettings(appDb, company);
         const known = (await appDb('gocardless_mandates')
+          .where({ company_code: company })
           .select(
             'mandate_id',
             'opera_account',
@@ -3626,6 +3675,7 @@ export function createRouter(ctx: AppContext): Router {
         const result = await importGocardlessBatch(
           operaDb,
           appDb,
+          company,
           {
             bankCode: String(req.query.bank_code ?? body.bank_code ?? ''),
             postDate: String(req.query.post_date ?? body.post_date ?? ''),
@@ -3736,13 +3786,16 @@ export function createRouter(ctx: AppContext): Router {
         const body = readObjectBody(req);
         const payments = readArrayBody<IncomingPayment>(req, 'payments');
         const settings = await loadSettings(appDb, company);
-        const known = (await appDb('gocardless_mandates').select(
-          'mandate_id',
-          'opera_account',
-        )) as unknown as MandateLink[];
+        const known = (await appDb('gocardless_mandates')
+          .where({ company_code: company })
+          .select(
+            'mandate_id',
+            'opera_account',
+          )) as unknown as MandateLink[];
         const result = await importGocardlessBatchFromEmail(
           operaDb,
           appDb,
+          company,
           {
             emailId: Number(req.query.email_id ?? body.email_id ?? 0),
             bankCode: String(req.query.bank_code ?? body.bank_code ?? ''),

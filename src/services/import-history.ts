@@ -11,6 +11,7 @@
  * per-app database (table `gocardless_imports`).
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface ImportHistoryRecord {
   id: number;
@@ -69,15 +70,17 @@ function dateToYmd(d: Date | string | null): string | null {
 
 export async function getImportHistory(
   appDb: Knex,
+  companyCode: string,
   operaDb: Knex | null,
   opts: GetImportHistoryOptions = {},
 ): Promise<ImportHistoryResponse> {
+  const scope = companyScope(companyCode);
   const limit = opts.limit ?? 50;
   const targetSystem = opts.targetSystem ?? 'opera_se';
 
   try {
     let query = appDb('gocardless_imports')
-      .where({ target_system: targetSystem })
+      .where({ ...scope, target_system: targetSystem })
       .orderBy('payment_date', 'desc')
       .orderBy('imported_at', 'desc')
       .limit(limit);
@@ -150,6 +153,7 @@ export async function getImportHistory(
     if (allAccounts.size > 0) {
       try {
         const mandateRows = (await appDb('gocardless_mandates')
+          .where({ ...scope })
           .select('opera_account', 'customer_name')
           .whereIn('opera_account', [...allAccounts])) as unknown as Array<{
           opera_account: string | null;
@@ -224,12 +228,14 @@ export async function getImportHistory(
  */
 export async function isGocardlessPayoutImported(
   appDb: Knex,
+  companyCode: string,
   payoutId: string,
   targetSystem?: 'opera_se' | 'opera_3' | 'opera3',
 ): Promise<boolean> {
+  const scope = companyScope(companyCode);
   if (!payoutId) return false;
   try {
-    let q = appDb('gocardless_imports').where({ payout_id: payoutId });
+    let q = appDb('gocardless_imports').where({ ...scope, payout_id: payoutId });
     if (targetSystem) q = q.andWhere({ target_system: targetSystem });
     const row = await q.first();
     return !!row;
@@ -246,19 +252,23 @@ export async function isGocardlessPayoutImported(
  */
 export async function isGocardlessReferenceImported(
   appDb: Knex,
+  companyCode: string,
   bankReference: string,
   targetSystem?: 'opera_se' | 'opera_3' | 'opera3',
 ): Promise<boolean> {
+  const scope = companyScope(companyCode);
   if (!bankReference) return false;
   const refLike = `${bankReference} (%`;
   try {
-    let q = appDb('gocardless_imports').where(function (this: Knex.QueryBuilder) {
-      this.where('bank_reference', bankReference).orWhere(
-        'bank_reference',
-        'like',
-        refLike,
-      );
-    });
+    let q = appDb('gocardless_imports')
+      .where({ ...scope })
+      .andWhere(function (this: Knex.QueryBuilder) {
+        this.where('bank_reference', bankReference).orWhere(
+          'bank_reference',
+          'like',
+          refLike,
+        );
+      });
     if (targetSystem) q = q.andWhere({ target_system: targetSystem });
     const row = await q.first();
     return !!row;

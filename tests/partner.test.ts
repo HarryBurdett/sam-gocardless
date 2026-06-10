@@ -84,7 +84,9 @@ function makeAppDb(state: MockState): any {
           let rows = [...state.signups];
           if (where) {
             rows = rows.filter((r) =>
-              Object.entries(where!).every(([k, v]) => (r as any)[k] === v),
+              Object.entries(where!)
+                .filter(([k]) => k !== 'company_code')
+                .every(([k, v]) => (r as any)[k] === v),
             );
           }
           rows.sort((a, b) => (orderDir === 'desc' ? b.id - a.id : a.id - b.id));
@@ -94,7 +96,9 @@ function makeAppDb(state: MockState): any {
           let count = 0;
           for (const r of state.signups) {
             const matches = where
-              ? Object.entries(where).every(([k, v]) => (r as any)[k] === v)
+              ? Object.entries(where)
+                  .filter(([k]) => k !== 'company_code')
+                  .every(([k, v]) => (r as any)[k] === v)
               : false;
             if (matches) {
               Object.assign(r, data);
@@ -107,7 +111,9 @@ function makeAppDb(state: MockState): any {
           let rows = [...state.signups];
           if (where) {
             rows = rows.filter((r) =>
-              Object.entries(where!).every(([k, v]) => (r as any)[k] === v),
+              Object.entries(where!)
+                .filter(([k]) => k !== 'company_code')
+                .every(([k, v]) => (r as any)[k] === v),
             );
           }
           rows.sort((a, b) => (orderDir === 'desc' ? b.id - a.id : a.id - b.id));

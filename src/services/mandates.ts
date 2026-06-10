@@ -16,6 +16,7 @@
  * links it without removing the placeholder).
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface Mandate {
   id: number;
@@ -84,10 +85,12 @@ function rowToMandate(r: MandateRow): Mandate {
 
 export async function listMandates(
   appDb: Knex,
+  companyCode: string,
   opts: ListMandatesOptions = {},
 ): Promise<ListMandatesResponse> {
+  const scope = companyScope(companyCode);
   try {
-    let query = appDb('gocardless_mandates');
+    let query = appDb('gocardless_mandates').where({ ...scope });
     if (opts.status) {
       query = query.where({ mandate_status: opts.status });
     }
@@ -160,11 +163,12 @@ export interface LinkMandateResult {
 
 async function detectRelink(
   appDb: Knex,
+  scope: { company_code: string },
   mandateId: string,
   newOperaAccount: string,
 ): Promise<{ oldAccount: string | null; gcName: string | null }> {
   const rows = (await appDb('gocardless_mandates')
-    .where({ mandate_id: mandateId })
+    .where({ ...scope, mandate_id: mandateId })
     .select('opera_account', 'opera_name')) as unknown as Array<{
     opera_account: string | null;
     opera_name: string | null;
@@ -200,8 +204,10 @@ async function detectRelink(
  */
 export async function linkMandate(
   appDb: Knex,
+  companyCode: string,
   input: LinkMandateInput & { confirm?: boolean },
 ): Promise<LinkMandateResult> {
+  const scope = companyScope(companyCode);
   const operaAccount = (input.operaAccount ?? '').trim();
   const mandateId = (input.mandateId ?? '').trim();
   if (!operaAccount || !mandateId) {
@@ -209,7 +215,7 @@ export async function linkMandate(
   }
 
   // 1. Detect re-link
-  const { oldAccount, gcName } = await detectRelink(appDb, mandateId, operaAccount);
+  const { oldAccount, gcName } = await detectRelink(appDb, scope, mandateId, operaAccount);
   if (oldAccount && !input.confirm) {
     return {
       success: false,
@@ -226,20 +232,20 @@ export async function linkMandate(
     // 2. Drop the old (different-account) row when re-linking
     if (oldAccount) {
       await appDb('gocardless_mandates')
-        .where({ mandate_id: mandateId, opera_account: oldAccount })
+        .where({ ...scope, mandate_id: mandateId, opera_account: oldAccount })
         .delete();
     }
 
     // 3. Remove __UNLINKED__ placeholder for this mandate
     if (operaAccount !== '__UNLINKED__') {
       await appDb('gocardless_mandates')
-        .where({ mandate_id: mandateId, opera_account: '__UNLINKED__' })
+        .where({ ...scope, mandate_id: mandateId, opera_account: '__UNLINKED__' })
         .delete();
     }
 
     // 4. Upsert (opera_account, mandate_id)
     const existing = (await appDb('gocardless_mandates')
-      .where({ opera_account: operaAccount, mandate_id: mandateId })
+      .where({ ...scope, opera_account: operaAccount, mandate_id: mandateId })
       .first()) as unknown as { id: number | null } | undefined;
 
     const baseFields: Record<string, unknown> = {
@@ -265,10 +271,11 @@ export async function linkMandate(
 
     if (existing) {
       await appDb('gocardless_mandates')
-        .where({ id: existing.id })
+        .where({ ...scope, id: existing.id })
         .update(baseFields);
     } else {
       await appDb('gocardless_mandates').insert({
+        ...scope,
         opera_account: operaAccount,
         mandate_id: mandateId,
         opera_name: input.operaName ?? null,
@@ -281,7 +288,7 @@ export async function linkMandate(
     }
 
     const fresh = (await appDb('gocardless_mandates')
-      .where({ opera_account: operaAccount, mandate_id: mandateId })
+      .where({ ...scope, opera_account: operaAccount, mandate_id: mandateId })
       .first()) as unknown as MandateRow | undefined;
     return {
       success: true,
@@ -392,12 +399,14 @@ export function findOperaCustomerMatch(
  */
 export async function syncMandatesFromGocardless(
   appDb: Knex,
+  companyCode: string,
   fetchPage: (cursor: string | null) => Promise<SyncMandatesPage>,
   fetchCustomer: (
     customerId: string,
   ) => Promise<RemoteCustomerLite | null>,
   operaCustomers: OperaGcCustomer[],
 ): Promise<SyncMandatesResponse> {
+  const scope = companyScope(companyCode);
   try {
     let synced = 0;
     let newCount = 0;
@@ -433,7 +442,7 @@ export async function syncMandatesFromGocardless(
 
         // Lookup any existing row(s) for this mandate_id (prefer linked)
         const rows = (await appDb('gocardless_mandates')
-          .where({ mandate_id: mandateId })
+          .where({ ...scope, mandate_id: mandateId })
           .select('opera_account', 'opera_name')) as unknown as Array<{
           opera_account: string | null;
           opera_name: string | null;
@@ -455,7 +464,7 @@ export async function syncMandatesFromGocardless(
 
         if (existingAccount && existingAccount !== '__UNLINKED__') {
           // Already linked — refresh status/scheme/email
-          const r = await linkMandate(appDb, {
+          const r = await linkMandate(appDb, companyCode, {
             operaAccount: existingAccount,
             mandateId,
             operaName: existingName,
@@ -471,7 +480,7 @@ export async function syncMandatesFromGocardless(
           // Existing placeholder — try to upgrade to a real link
           const match = findOperaCustomerMatch(gcName, operaCustomers);
           if (match) {
-            const r = await linkMandate(appDb, {
+            const r = await linkMandate(appDb, companyCode, {
               operaAccount: match.account,
               mandateId,
               operaName: match.name,
@@ -487,7 +496,7 @@ export async function syncMandatesFromGocardless(
             }
           } else {
             // Stay unlinked — refresh metadata
-            const r = await linkMandate(appDb, {
+            const r = await linkMandate(appDb, companyCode, {
               operaAccount: '__UNLINKED__',
               mandateId,
               operaName: gcName,
@@ -504,7 +513,7 @@ export async function syncMandatesFromGocardless(
           // No prior row — try auto-match, else placeholder
           const match = findOperaCustomerMatch(gcName, operaCustomers);
           if (match) {
-            const r = await linkMandate(appDb, {
+            const r = await linkMandate(appDb, companyCode, {
               operaAccount: match.account,
               mandateId,
               operaName: match.name,
@@ -520,7 +529,7 @@ export async function syncMandatesFromGocardless(
               newCount += 1;
             }
           } else {
-            const r = await linkMandate(appDb, {
+            const r = await linkMandate(appDb, companyCode, {
               operaAccount: '__UNLINKED__',
               mandateId,
               operaName: gcName,
@@ -541,11 +550,13 @@ export async function syncMandatesFromGocardless(
     }
 
     // Cleanup: remove __UNLINKED__ duplicates where a linked row exists
-    const allRows = (await appDb('gocardless_mandates').select(
-      'id',
-      'mandate_id',
-      'opera_account',
-    )) as unknown as Array<{
+    const allRows = (await appDb('gocardless_mandates')
+      .where({ ...scope })
+      .select(
+        'id',
+        'mandate_id',
+        'opera_account',
+      )) as unknown as Array<{
       id: number;
       mandate_id: string | null;
       opera_account: string | null;
@@ -560,7 +571,7 @@ export async function syncMandatesFromGocardless(
       const mid = (r.mandate_id ?? '').trim();
       const acct = (r.opera_account ?? '').trim();
       if (mid && acct === '__UNLINKED__' && linkedSet.has(mid)) {
-        await appDb('gocardless_mandates').where({ id: r.id }).delete();
+        await appDb('gocardless_mandates').where({ ...scope, id: r.id }).delete();
       }
     }
 
@@ -595,11 +606,13 @@ export interface CancelMandateResponse {
 
 export async function cancelMandate(
   appDb: Knex,
+  companyCode: string,
   mandateId: string,
   cancelRemote?: (
     id: string,
   ) => Promise<{ success: boolean; status?: string; error?: string; alreadyCancelled?: boolean }>,
 ): Promise<CancelMandateResponse> {
+  const scope = companyScope(companyCode);
   const id = (mandateId ?? '').trim();
   if (!id) return { success: false, error: 'mandate_id is required' };
 
@@ -617,7 +630,7 @@ export async function cancelMandate(
   // 2. Update local mandate_status
   try {
     const updated = await appDb('gocardless_mandates')
-      .where({ mandate_id: id })
+      .where({ ...scope, mandate_id: id })
       .update({
         mandate_status: gcStatus,
         updated_at: appDb.fn.now(),
@@ -647,8 +660,10 @@ export interface UnlinkMandateResponse {
 
 export async function unlinkMandate(
   appDb: Knex,
+  companyCode: string,
   mandateId: string,
 ): Promise<UnlinkMandateResponse> {
+  const scope = companyScope(companyCode);
   const id = (mandateId ?? '').trim();
   if (!id) return { success: false, error: 'mandate_id is required' };
   try {
@@ -656,7 +671,7 @@ export async function unlinkMandate(
     // existence (so future syncs don't try to re-create it). Don't
     // delete — mandate-level history matters for audit.
     const updated = await appDb('gocardless_mandates')
-      .where({ mandate_id: id })
+      .where({ ...scope, mandate_id: id })
       .andWhere('opera_account', '!=', '__UNLINKED__')
       .update({
         opera_account: '__UNLINKED__',
@@ -673,9 +688,12 @@ export async function unlinkMandate(
 
 export async function listUnlinkedMandates(
   appDb: Knex,
+  companyCode: string,
 ): Promise<ListMandatesResponse> {
+  const scope = companyScope(companyCode);
   try {
     const rows = (await appDb('gocardless_mandates').where({
+      ...scope,
       opera_account: '__UNLINKED__',
     })) as unknown as MandateRow[];
 

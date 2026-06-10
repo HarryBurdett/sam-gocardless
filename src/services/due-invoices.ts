@@ -20,6 +20,7 @@
  * a no-op.
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface DueInvoice {
   opera_account: string;
@@ -213,9 +214,11 @@ function emptyResponse(advanceDate: string, today: string): GetDueInvoicesRespon
 export async function getDueInvoices(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   opts: GetDueInvoicesOptions = {},
   todayDate: Date = new Date(),
 ): Promise<GetDueInvoicesResponse> {
+  const scope = companyScope(companyCode);
   const todayIso = todayDate.toISOString().slice(0, 10);
   const subTag = opts.subscriptionTag ?? 'SUB';
   const includeFuture = opts.includeFuture !== false;
@@ -239,7 +242,7 @@ export async function getDueInvoices(
   try {
     // 1. Active mandates keyed by opera_account
     const mandateRows = (await appDb('gocardless_mandates')
-      .where({ mandate_status: 'active' })
+      .where({ ...scope, mandate_status: 'active' })
       .select('opera_account', 'mandate_id')) as unknown as MandateRow[];
     const mandateLookup = new Map<string, MandateRow>();
     for (const m of mandateRows ?? []) {
@@ -254,13 +257,15 @@ export async function getDueInvoices(
     const mandatedAccounts = Array.from(mandateLookup.keys());
 
     // 2. Pending payment-request lookup keyed by invoice_ref
-    const requestRows = (await appDb('gocardless_payment_requests').select(
-      'id',
-      'status',
-      'charge_date',
-      'amount_pence',
-      'invoice_refs',
-    )) as unknown as RequestRow[];
+    const requestRows = (await appDb('gocardless_payment_requests')
+      .where({ ...scope })
+      .select(
+        'id',
+        'status',
+        'charge_date',
+        'amount_pence',
+        'invoice_refs',
+      )) as unknown as RequestRow[];
     const pendingByRef = new Map<string, PaymentRequestInfo>();
     for (const r of requestRows ?? []) {
       const status = trim(r.status);
@@ -295,11 +300,13 @@ export async function getDueInvoices(
     }
 
     // 4. Subscription source-doc lookup
-    const subRows = (await appDb('gocardless_subscriptions').select(
-      'opera_account',
-      'source_doc',
-      'status',
-    )) as unknown as SubRow[];
+    const subRows = (await appDb('gocardless_subscriptions')
+      .where({ ...scope })
+      .select(
+        'opera_account',
+        'source_doc',
+        'status',
+      )) as unknown as SubRow[];
     const subDocs = new Map<string, string>();
     for (const s of subRows ?? []) {
       const acct = trim(s.opera_account);

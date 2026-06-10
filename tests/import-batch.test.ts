@@ -8,6 +8,8 @@ import {
   type IncomingPayment,
 } from '../src/services/import-batch.js';
 
+const TEST_COMPANY = 'C';
+
 interface OperaState {
   banks: Array<{
     nk_acnt: string;
@@ -159,6 +161,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -174,6 +177,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb({ existingPayouts: ['PO_123'] }),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -193,6 +197,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -213,6 +218,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -238,6 +244,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -261,6 +268,7 @@ describe('validateImportRequest', () => {
         periodValid: true,
       }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -280,6 +288,7 @@ describe('validateImportRequest', () => {
     const result = await validateImportRequest(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -354,6 +363,7 @@ describe('importGocardlessBatch', () => {
     const result = await importGocardlessBatch(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -383,6 +393,7 @@ describe('importGocardlessBatch', () => {
     const result = await importGocardlessBatch(
       makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
       makeAppDb(),
+      TEST_COMPANY,
       {
         bankCode: 'BC010',
         postDate: '2026-04-30',
@@ -409,6 +420,7 @@ describe('importGocardlessBatch', () => {
       importGocardlessBatch(
         makeOperaDbWithCurrency({ banks: KNOWN_BANKS, periodValid: true }),
         makeAppDb(),
+        TEST_COMPANY,
         {
           bankCode: 'BC010',
           postDate: '2026-04-30',

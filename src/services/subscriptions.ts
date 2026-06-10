@@ -23,14 +23,7 @@
  */
 import type { Knex } from 'knex';
 import { loadSettings } from './settings.js';
-
-// TODO(multi-company): the gocardless_subscriptions and
-// gocardless_subscription_documents queries below do not yet filter by
-// company_code. A follow-up migration (planned
-// 009_subscriptions_company_code.ts) will add the column; once it
-// lands, every appDb('gocardless_subscriptions') and
-// appDb('gocardless_subscription_documents') query in this file must
-// be updated to scope by company.
+import { companyScope } from '../_shared/get-company.js';
 
 // ---------------------------------------------------------------------
 // Types
@@ -266,11 +259,13 @@ function rowToSubscription(
 
 async function fetchSourceDocs(
   appDb: Knex,
+  scope: { company_code: string },
   subscriptionIds: string[],
 ): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
   if (subscriptionIds.length === 0) return map;
   const rows = (await appDb('gocardless_subscription_documents')
+    .where({ ...scope })
     .whereIn('subscription_id', subscriptionIds)
     .orderBy('added_at', 'asc')
     .select('subscription_id', 'source_doc')) as unknown as Array<{
@@ -400,12 +395,14 @@ async function fetchOperaDocs(
 
 async function fetchMandateNames(
   appDb: Knex,
+  scope: { company_code: string },
   operaAccounts: string[],
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (operaAccounts.length === 0) return map;
   try {
     const rows = (await appDb('gocardless_mandates')
+      .where({ ...scope })
       .whereIn('opera_account', operaAccounts)
       .select('opera_account', 'opera_name')) as unknown as Array<{
       opera_account: string | null;
@@ -431,8 +428,11 @@ export async function listSubscriptions(
   opts: ListSubscriptionsOptions = {},
   operaDb: Knex | null = null,
 ): Promise<ListSubscriptionsResponse> {
+  const scope = companyScope(companyCode);
   try {
-    let query = appDb('gocardless_subscriptions').orderBy('created_at', 'desc');
+    let query = appDb('gocardless_subscriptions')
+      .where({ ...scope })
+      .orderBy('created_at', 'desc');
     if (opts.limit !== undefined) {
       query = query.limit(opts.limit);
     }
@@ -455,8 +455,8 @@ export async function listSubscriptions(
     const subscriptionTag = await loadSubscriptionTag(appDb, companyCode);
 
     const [docsBySub, mandateNames] = await Promise.all([
-      fetchSourceDocs(appDb, subIds),
-      fetchMandateNames(appDb, accounts),
+      fetchSourceDocs(appDb, scope, subIds),
+      fetchMandateNames(appDb, scope, accounts),
     ]);
 
     // Collect all source-docs across all subscriptions for the
@@ -514,11 +514,12 @@ export async function getSubscription(
   subscriptionId: string,
   operaDb: Knex | null = null,
 ): Promise<GetSubscriptionResponse> {
+  const scope = companyScope(companyCode);
   const id = (subscriptionId ?? '').trim();
   if (!id) return { success: false, error: 'subscription_id is required' };
   try {
     const row = (await appDb('gocardless_subscriptions')
-      .where({ subscription_id: id })
+      .where({ ...scope, subscription_id: id })
       .first()) as unknown as SubscriptionRow | undefined;
     if (!row) {
       return { success: false, error: `Subscription ${id} not found` };
@@ -526,8 +527,8 @@ export async function getSubscription(
     const account = (row.opera_account ?? '').trim();
     const subscriptionTag = await loadSubscriptionTag(appDb, companyCode);
     const [docsBySub, mandateNames] = await Promise.all([
-      fetchSourceDocs(appDb, [id]),
-      fetchMandateNames(appDb, account ? [account] : []),
+      fetchSourceDocs(appDb, scope, [id]),
+      fetchMandateNames(appDb, scope, account ? [account] : []),
     ]);
     const linkedDocs = docsBySub.get(id) ?? [];
     const allDocs = new Set<string>(linkedDocs);
@@ -561,13 +562,11 @@ export async function updateSubscriptionStatus(
   subscriptionId: string,
   status: string,
 ): Promise<boolean> {
-  // companyCode is reserved for the upcoming gocardless_subscriptions.company_code
-  // migration; once that's in place we'll filter on it here.
-  void companyCode;
+  const scope = companyScope(companyCode);
   const id = (subscriptionId ?? '').trim();
   if (!id || !status) return false;
   const updated = await appDb('gocardless_subscriptions')
-    .where({ subscription_id: id })
+    .where({ ...scope, subscription_id: id })
     .update({ status, updated_at: appDb.fn.now() });
   return Number(updated) > 0;
 }
@@ -659,8 +658,9 @@ export async function updateSubscriptionDetails(
   if (!r.success) {
     return { success: false, error: r.error ?? 'Remote update failed' };
   }
+  const scope = companyScope(companyCode);
   const local = (await appDb('gocardless_subscriptions')
-    .where({ subscription_id: id })
+    .where({ ...scope, subscription_id: id })
     .first()) as unknown as SubscriptionRow | undefined;
   if (local) {
     const patch: Record<string, unknown> = { updated_at: appDb.fn.now() };
@@ -674,7 +674,7 @@ export async function updateSubscriptionDetails(
       patch.status = r.subscription.status;
     }
     await appDb('gocardless_subscriptions')
-      .where({ subscription_id: id })
+      .where({ ...scope, subscription_id: id })
       .update(patch);
   }
   const fresh = await getSubscription(appDb, companyCode, id);
@@ -757,6 +757,7 @@ export async function createSubscription(
   remote: CreateSubscriptionRemote,
   opts: { subscriptionTag?: string } = {},
 ): Promise<CreateSubscriptionResponse> {
+  const scope = companyScope(companyCode);
   const subTag = opts.subscriptionTag ?? 'SUB';
   const sourceDocs = (input.sourceDocs ?? [])
     .map((s) => (s ?? '').toString().trim())
@@ -821,7 +822,7 @@ export async function createSubscription(
 
   // 5. Look up active mandate for the customer
   const mandate = (await appDb('gocardless_mandates')
-    .where({ opera_account: account, mandate_status: 'active' })
+    .where({ ...scope, opera_account: account, mandate_status: 'active' })
     .orderBy('created_at', 'desc')
     .first()) as unknown as
     | { mandate_id: string | null; opera_name: string | null }
@@ -835,6 +836,7 @@ export async function createSubscription(
 
   // 6. Check no doc already linked to a different active subscription
   const linkedRows = (await appDb('gocardless_subscription_documents')
+    .where({ ...scope })
     .whereIn('source_doc', docRefs)
     .select('subscription_id', 'source_doc')) as unknown as Array<{
     subscription_id: string | null;
@@ -850,6 +852,7 @@ export async function createSubscription(
     );
     if (subIds.length > 0) {
       const existing = (await appDb('gocardless_subscriptions')
+        .where({ ...scope })
         .whereIn('subscription_id', subIds)
         .andWhereNot({ status: 'cancelled' })
         .select('subscription_id', 'status')) as unknown as Array<{
@@ -909,6 +912,7 @@ export async function createSubscription(
   // 8. Persist locally
   try {
     await appDb('gocardless_subscriptions').insert({
+      ...scope,
       subscription_id: gcSubId,
       mandate_id: mandate.mandate_id,
       opera_account: account,
@@ -933,6 +937,7 @@ export async function createSubscription(
     for (const doc of docRefs) {
       try {
         await appDb('gocardless_subscription_documents').insert({
+          ...scope,
           subscription_id: gcSubId,
           source_doc: doc,
           added_at: appDb.fn.now(),
@@ -1011,16 +1016,16 @@ export async function syncSubscriptionsFromGocardless(
   fetchPage: (cursor: string | null) => Promise<PageResult>,
   opts: SyncOptions = {},
 ): Promise<SyncSubscriptionsResponse> {
-  // companyCode is reserved for the upcoming gocardless_subscriptions.company_code
-  // migration; once that's in place we'll filter on it here.
-  void companyCode;
+  const scope = companyScope(companyCode);
   try {
     // Build mandate -> {opera_account, opera_name} lookup from local
-    const mandates = (await appDb('gocardless_mandates').select(
-      'mandate_id',
-      'opera_account',
-      'opera_name',
-    )) as unknown as Array<{
+    const mandates = (await appDb('gocardless_mandates')
+      .where({ ...scope })
+      .select(
+        'mandate_id',
+        'opera_account',
+        'opera_name',
+      )) as unknown as Array<{
       mandate_id: string | null;
       opera_account: string | null;
       opera_name: string | null;
@@ -1066,7 +1071,7 @@ export async function syncSubscriptionsFromGocardless(
         }
 
         const existing = (await appDb('gocardless_subscriptions')
-          .where({ subscription_id: subId })
+          .where({ ...scope, subscription_id: subId })
           .first()) as unknown as
           | {
               id: number;
@@ -1090,7 +1095,7 @@ export async function syncSubscriptionsFromGocardless(
 
         if (existing) {
           await appDb('gocardless_subscriptions')
-            .where({ subscription_id: subId })
+            .where({ ...scope, subscription_id: subId })
             .update({
               mandate_id: mandateId,
               amount_pence: amountPence,
@@ -1111,6 +1116,7 @@ export async function syncSubscriptionsFromGocardless(
           updated += 1;
         } else {
           await appDb('gocardless_subscriptions').insert({
+            ...scope,
             subscription_id: subId,
             mandate_id: mandateId,
             opera_account: info.opera_account,
@@ -1228,8 +1234,9 @@ export async function syncSubscriptionFromOpera(
     return { success: false, error: remote.error ?? 'Remote update failed' };
   }
 
+  const scope = companyScope(companyCode);
   await appDb('gocardless_subscriptions')
-    .where({ subscription_id: id })
+    .where({ ...scope, subscription_id: id })
     .update({
       amount_pence: newAmountPence,
       updated_at: appDb.fn.now(),
@@ -1260,6 +1267,7 @@ export async function linkSubscriptionToDocument(
   companyCode: string,
   input: LinkSubscriptionInput,
 ): Promise<SubscriptionLifecycleResponse> {
+  const scope = companyScope(companyCode);
   const subId = (input.subscriptionId ?? '').trim();
   const doc = (input.sourceDoc ?? '').trim();
   if (!subId || !doc) {
@@ -1270,7 +1278,7 @@ export async function linkSubscriptionToDocument(
   }
   // 1. The subscription itself must exist locally
   const sub = (await appDb('gocardless_subscriptions')
-    .where({ subscription_id: subId })
+    .where({ ...scope, subscription_id: subId })
     .first()) as unknown as SubscriptionRow | undefined;
   if (!sub) {
     return {
@@ -1280,7 +1288,7 @@ export async function linkSubscriptionToDocument(
   }
   // 2. The doc must not already be linked to a *different* subscription
   const existing = (await appDb('gocardless_subscription_documents')
-    .where({ source_doc: doc })
+    .where({ ...scope, source_doc: doc })
     .select('subscription_id')) as unknown as Array<{
     subscription_id: string | null;
   }>;
@@ -1305,6 +1313,7 @@ export async function linkSubscriptionToDocument(
   }
   try {
     await appDb('gocardless_subscription_documents').insert({
+      ...scope,
       subscription_id: subId,
       source_doc: doc,
       added_at: appDb.fn.now(),
@@ -1329,12 +1338,13 @@ export async function unlinkSubscriptionFromDocument(
   companyCode: string,
   input: UnlinkSubscriptionInput,
 ): Promise<SubscriptionLifecycleResponse> {
+  const scope = companyScope(companyCode);
   const subId = (input.subscriptionId ?? '').trim();
   if (!subId) {
     return { success: false, error: 'subscription_id is required' };
   }
   const sub = (await appDb('gocardless_subscriptions')
-    .where({ subscription_id: subId })
+    .where({ ...scope, subscription_id: subId })
     .first()) as unknown as SubscriptionRow | undefined;
   if (!sub) {
     return { success: false, error: `Subscription ${subId} not found` };
@@ -1342,7 +1352,7 @@ export async function unlinkSubscriptionFromDocument(
   const doc = (input.sourceDoc ?? '').trim();
   if (doc) {
     const removed = await appDb('gocardless_subscription_documents')
-      .where({ subscription_id: subId, source_doc: doc })
+      .where({ ...scope, subscription_id: subId, source_doc: doc })
       .delete();
     if (!Number(removed)) {
       return {
@@ -1352,7 +1362,7 @@ export async function unlinkSubscriptionFromDocument(
     }
   } else {
     await appDb('gocardless_subscription_documents')
-      .where({ subscription_id: subId })
+      .where({ ...scope, subscription_id: subId })
       .delete();
   }
   const fresh = await getSubscription(appDb, companyCode, subId);

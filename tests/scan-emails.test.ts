@@ -5,6 +5,8 @@ import {
   type ScannedEmail,
 } from '../src/services/scan-emails.js';
 
+const TEST_COMPANY = 'C';
+
 // ---------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------
@@ -19,6 +21,7 @@ function makeAppDb(opts: {
     }
     let mode: 'email_ids' | 'refs' | 'unknown' = 'unknown';
     const builder: any = {
+      where: () => builder,
       whereNotNull: (col: string) => {
         if (col === 'email_id') mode = 'email_ids';
         if (col === 'bank_reference') mode = 'refs';
@@ -147,6 +150,7 @@ describe('scanGocardlessEmails', () => {
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([]),
       {},
     );
@@ -164,6 +168,7 @@ describe('scanGocardlessEmails', () => {
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL]),
       {},
     );
@@ -188,6 +193,7 @@ describe('scanGocardlessEmails', () => {
         periodValid: true,
       }),
       makeAppDb({ importedEmailIds: [101] }),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL]),
       {},
     );
@@ -204,6 +210,7 @@ describe('scanGocardlessEmails', () => {
         periodValid: true,
       }),
       makeAppDb({ importedRefs: ['INTSYSUKLTD-PAY-ABC'] }),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL]),
       {},
     );
@@ -220,6 +227,7 @@ describe('scanGocardlessEmails', () => {
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL]),
       { companyReferenceOverride: 'OTHERCO' },
     );
@@ -248,6 +256,7 @@ Net amount    600.00 EUR
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([eurEmail]),
       {},
     );
@@ -264,6 +273,7 @@ Net amount    600.00 EUR
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL], { syncFails: true }),
       {},
     );
@@ -280,6 +290,7 @@ Net amount    600.00 EUR
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([
         {
           ...SAMPLE_EMAIL_HORIZONTAL,
@@ -301,6 +312,7 @@ Net amount    600.00 EUR
         periodValid: true,
       }),
       makeAppDb({}),
+      TEST_COMPANY,
       makeMailbox([SAMPLE_EMAIL_HORIZONTAL]),
       {},
     );

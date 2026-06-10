@@ -6,6 +6,8 @@ import {
   syncPaymentStatuses,
 } from '../src/services/payment-requests.js';
 
+const TEST_COMPANY = 'C';
+
 interface RequestRow {
   id: number;
   payment_id: string;
@@ -56,7 +58,9 @@ function makeAppDb(state: MockState): any {
         },
         select: (..._cols: string[]) => {
           let rows = state.requests.filter((r) =>
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
           if (inCol && inVals) {
             rows = rows.filter((r) =>
@@ -75,7 +79,9 @@ function makeAppDb(state: MockState): any {
         },
         first: () => {
           const found = state.requests.find((r) =>
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
           return Promise.resolve(found);
         },
@@ -83,7 +89,9 @@ function makeAppDb(state: MockState): any {
           let count = 0;
           for (const r of state.requests) {
             if (
-              Object.entries(conds).every(([k, v]) => (r as any)[k] === v)
+              Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v)
             ) {
               Object.assign(r, data);
               count++;
@@ -93,7 +101,9 @@ function makeAppDb(state: MockState): any {
         },
         then: (cb: (rows: RequestRow[]) => unknown) => {
           let rows = state.requests.filter((r) =>
-            Object.entries(conds).every(([k, v]) => (r as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (r as any)[k] === v),
           );
           if (order) {
             rows = [...rows].sort((a, b) => {
@@ -121,7 +131,9 @@ function makeAppDb(state: MockState): any {
         },
         first: () => {
           const found = state.mandates.find((m) =>
-            Object.entries(conds).every(([k, v]) => (m as any)[k] === v),
+            Object.entries(conds)
+              .filter(([k]) => k !== 'company_code')
+              .every(([k, v]) => (m as any)[k] === v),
           );
           return Promise.resolve(found);
         },
@@ -174,7 +186,7 @@ describe('listPaymentRequests', () => {
       ],
       mandates: [],
     };
-    const result = await listPaymentRequests(makeAppDb(state));
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY);
     expect(result.success).toBe(true);
     expect(result.count).toBe(3);
     expect(result.requests[0]?.id).toBe(2);
@@ -188,7 +200,7 @@ describe('listPaymentRequests', () => {
       ],
       mandates: [],
     };
-    const result = await listPaymentRequests(makeAppDb(state), {
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY, {
       status: 'paid_out',
     });
     expect(result.count).toBe(1);
@@ -203,7 +215,7 @@ describe('listPaymentRequests', () => {
       ],
       mandates: [],
     };
-    const result = await listPaymentRequests(makeAppDb(state), {
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY, {
       operaAccount: 'A',
     });
     expect(result.count).toBe(1);
@@ -216,7 +228,7 @@ describe('listPaymentRequests', () => {
       ),
       mandates: [],
     };
-    const result = await listPaymentRequests(makeAppDb(state), { limit: 2 });
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY, { limit: 2 });
     expect(result.count).toBe(2);
   });
 
@@ -231,7 +243,7 @@ describe('listPaymentRequests', () => {
         { opera_account: 'B', opera_name: 'Beta Co' },
       ],
     };
-    const result = await listPaymentRequests(makeAppDb(state));
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY);
     const aReq = result.requests.find((r) => r.opera_account === 'A');
     expect(aReq?.customer_name).toBe('Acme Ltd');
   });
@@ -241,7 +253,7 @@ describe('listPaymentRequests', () => {
       requests: [emptyRequest({ id: 1, opera_account: 'CUST01' })],
       mandates: [],
     };
-    const result = await listPaymentRequests(makeAppDb(state));
+    const result = await listPaymentRequests(makeAppDb(state), TEST_COMPANY);
     expect(result.requests[0]?.customer_name).toBe('CUST01');
   });
 });
@@ -252,7 +264,7 @@ describe('getPaymentRequest', () => {
       requests: [emptyRequest({ id: 7, opera_account: 'CUST01' })],
       mandates: [{ opera_account: 'CUST01', opera_name: 'Acme Ltd' }],
     };
-    const result = await getPaymentRequest(makeAppDb(state), 7);
+    const result = await getPaymentRequest(makeAppDb(state), TEST_COMPANY, 7);
     expect(result.success).toBe(true);
     expect(result.payment_request?.id).toBe(7);
     expect(result.payment_request?.customer_name).toBe('Acme Ltd');
@@ -260,14 +272,14 @@ describe('getPaymentRequest', () => {
 
   it('returns 404 when not found', async () => {
     const state: MockState = { requests: [], mandates: [] };
-    const result = await getPaymentRequest(makeAppDb(state), 999);
+    const result = await getPaymentRequest(makeAppDb(state), TEST_COMPANY, 999);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
 
   it('rejects bad request_id', async () => {
     const state: MockState = { requests: [], mandates: [] };
-    const result = await getPaymentRequest(makeAppDb(state), 0);
+    const result = await getPaymentRequest(makeAppDb(state), TEST_COMPANY, 0);
     expect(result.success).toBe(false);
   });
 });
@@ -291,6 +303,7 @@ describe('cancelPaymentRequest', () => {
     };
     const result = await cancelPaymentRequest(
       makeAppDb(state),
+      TEST_COMPANY,
       1,
       cancelRemote,
     );
@@ -317,6 +330,7 @@ describe('cancelPaymentRequest', () => {
     });
     const result = await cancelPaymentRequest(
       makeAppDb(state),
+      TEST_COMPANY,
       1,
       cancelRemote,
     );
@@ -333,14 +347,14 @@ describe('cancelPaymentRequest', () => {
       ],
       mandates: [],
     };
-    const result = await cancelPaymentRequest(makeAppDb(state), 1);
+    const result = await cancelPaymentRequest(makeAppDb(state), TEST_COMPANY, 1);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/Cannot cancel/);
   });
 
   it('returns not-found when id missing', async () => {
     const state: MockState = { requests: [], mandates: [] };
-    const result = await cancelPaymentRequest(makeAppDb(state), 999);
+    const result = await cancelPaymentRequest(makeAppDb(state), TEST_COMPANY, 999);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/);
   });
@@ -359,6 +373,7 @@ describe('cancelPaymentRequest', () => {
     };
     const result = await cancelPaymentRequest(
       makeAppDb(state),
+      TEST_COMPANY,
       1,
       cancelRemote,
     );
@@ -377,7 +392,7 @@ describe('syncPaymentStatuses', () => {
       ],
       mandates: [],
     };
-    const result = await syncPaymentStatuses(makeAppDb(state), async () =>
+    const result = await syncPaymentStatuses(makeAppDb(state), TEST_COMPANY, async () =>
       ({ success: true, payment: { status: 'paid_out' } }),
     );
     expect(result.success).toBe(true);
@@ -398,7 +413,7 @@ describe('syncPaymentStatuses', () => {
       if (id === 'P2') return { success: true, payment: { status: 'submitted' } };
       return { success: false };
     };
-    const result = await syncPaymentStatuses(makeAppDb(state), remote);
+    const result = await syncPaymentStatuses(makeAppDb(state), TEST_COMPANY, remote);
     expect(result.success).toBe(true);
     expect(result.total_checked).toBe(2);
     expect(result.updated).toBe(1); // only P1 changed
@@ -419,7 +434,7 @@ describe('syncPaymentStatuses', () => {
       if (id === 'P2') return { success: true, payment: { status: 'paid_out' } };
       return { success: false };
     };
-    const result = await syncPaymentStatuses(makeAppDb(state), remote);
+    const result = await syncPaymentStatuses(makeAppDb(state), TEST_COMPANY, remote);
     expect(result.success).toBe(true);
     expect(result.updated).toBe(1);
     expect(state.requests[0]?.status).toBe('pending'); // skipped
@@ -438,7 +453,7 @@ describe('syncPaymentStatuses', () => {
       remoteCalled = true;
       return { success: true };
     };
-    const result = await syncPaymentStatuses(makeAppDb(state), remote);
+    const result = await syncPaymentStatuses(makeAppDb(state), TEST_COMPANY, remote);
     expect(result.success).toBe(true);
     expect(remoteCalled).toBe(false);
   });
@@ -457,7 +472,7 @@ describe('syncPaymentStatuses', () => {
         charge_date: '2026-04-22',
       },
     });
-    await syncPaymentStatuses(makeAppDb(state), remote);
+    await syncPaymentStatuses(makeAppDb(state), TEST_COMPANY, remote);
     expect(state.requests[0]?.charge_date).toBe('2026-04-22');
   });
 });

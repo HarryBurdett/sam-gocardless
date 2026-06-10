@@ -21,6 +21,7 @@
  * to status='posted' (best-effort — failures swallowed).
  */
 import type { Knex } from 'knex';
+import { companyScope } from '../_shared/get-company.js';
 
 export interface UnpostedPayment {
   id: number | string | null;
@@ -137,11 +138,12 @@ async function hasMatchingCashbookReceipt(
 
 async function markPosted(
   appDb: Knex,
+  scope: { company_code: string },
   requestId: number,
 ): Promise<void> {
   try {
     await appDb('gocardless_payment_requests')
-      .where({ id: requestId })
+      .where({ ...scope, id: requestId })
       .update({ status: 'posted', updated_at: appDb.fn.now() });
   } catch {
     // best-effort — Python ignores failures here
@@ -151,10 +153,13 @@ async function markPosted(
 export async function getUnpostedPayments(
   operaDb: Knex,
   appDb: Knex,
+  companyCode: string,
   opts: UnpostedOptions = {},
 ): Promise<UnpostedPaymentsResponse> {
+  const scope = companyScope(companyCode);
   try {
     const requests = (await appDb('gocardless_payment_requests')
+      .where({ ...scope })
       .orderBy('id', 'desc')
       .limit(10000)) as unknown as PaymentRequestRow[];
 
@@ -173,7 +178,7 @@ export async function getUnpostedPayments(
         try {
           if (await opts.isPayoutImported(payoutId)) {
             alreadyPosted = true;
-            await markPosted(appDb, req.id);
+            await markPosted(appDb, scope, req.id);
           }
         } catch {
           // best-effort
@@ -185,7 +190,7 @@ export async function getUnpostedPayments(
       if (!alreadyPosted && invoiceRefs.length > 0) {
         if (await isInvoiceFullyPaid(operaDb, invoiceRefs)) {
           alreadyPosted = true;
-          await markPosted(appDb, req.id);
+          await markPosted(appDb, scope, req.id);
         }
       }
 
@@ -195,7 +200,7 @@ export async function getUnpostedPayments(
       if (!alreadyPosted && account && Number.isFinite(amountPence) && amountPence > 0) {
         if (await hasMatchingCashbookReceipt(operaDb, account, amountPence)) {
           alreadyPosted = true;
-          await markPosted(appDb, req.id);
+          await markPosted(appDb, scope, req.id);
         }
       }
 

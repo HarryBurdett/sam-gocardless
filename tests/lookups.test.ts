@@ -155,9 +155,12 @@ describe('getSetupStatus', () => {
         };
       }
       if (table === 'gocardless_partner_signups') {
-        return {
-          orderBy: () => ({ first: async () => canned.signup ?? null }),
+        const builder: any = {
+          where: () => builder,
+          orderBy: () => builder,
+          first: async () => canned.signup ?? null,
         };
+        return builder;
       }
       return {};
     };

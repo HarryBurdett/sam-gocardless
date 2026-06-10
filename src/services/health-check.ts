@@ -15,6 +15,7 @@
  */
 import type { Knex } from 'knex';
 import type { GoCardlessSettings } from './settings.js';
+import { companyScope } from '../_shared/get-company.js';
 
 const APP_NAME = 'gocardless';
 const MAX_ORPHANS_RETURNED = 50;
@@ -142,16 +143,21 @@ function checkSettingsFeesAccount(
 
 async function checkPaymentCustomerCodes(
   appDb: Knex,
+  companyCode: string,
   validCustomerCodes: Set<string>,
 ): Promise<HealthCheckItem> {
+  const scope = companyScope(companyCode);
   const referenced = new Set<string>();
   let sourcesInspected = 0;
 
   for (const table of ['gocardless_mandates', 'gocardless_payment_requests']) {
     try {
-      const rows = (await appDb.raw(
-        `SELECT DISTINCT opera_account FROM ${table} WHERE opera_account IS NOT NULL AND opera_account != ''`,
-      )) as unknown as Array<{ opera_account: string | null }>;
+      const rows = (await appDb(table)
+        .where({ ...scope })
+        .whereNotNull('opera_account')
+        .andWhereRaw("opera_account <> ''")
+        .distinct('opera_account')
+        .select('opera_account')) as unknown as Array<{ opera_account: string | null }>;
       sourcesInspected += 1;
       for (const row of Array.isArray(rows) ? rows : []) {
         const code = (row.opera_account ?? '').trim();
@@ -213,6 +219,7 @@ async function checkPaymentCustomerCodes(
 export async function runHealthCheck(opts: {
   operaDb: Knex;
   appDb: Knex | null;
+  companyCode: string;
   settings: GoCardlessSettings | null;
 }): Promise<HealthCheckResult> {
   const checks: HealthCheckItem[] = [];
@@ -236,7 +243,7 @@ export async function runHealthCheck(opts: {
 
   // Payment history check
   if (opts.appDb) {
-    checks.push(await checkPaymentCustomerCodes(opts.appDb, validCustomerCodes));
+    checks.push(await checkPaymentCustomerCodes(opts.appDb, opts.companyCode, validCustomerCodes));
   } else {
     checks.push({
       name: 'Payment history',
